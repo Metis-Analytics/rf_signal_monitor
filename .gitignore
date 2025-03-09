@@ -30,10 +30,10 @@ ENV/
 *.sqlite3
 
 # JSON data files (uncomment if you want to exclude these from version control)
-# *.json
+*.json
 
 # Keep specific JSON files that should be tracked
-# !whitelist_template.json
+!whitelist_template.json
 
 # OS specific files
 .DS_Store
@@ -42,3 +42,8 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# Binary/sample files
+*.bin
+*.iq
+samples.*

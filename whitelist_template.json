@@ -1,0 +1,10 @@
+{
+    "template": {
+        "name": "Example Device",
+        "type": "LTE",
+        "frequency": 915.0,
+        "first_seen": "2025-03-08T00:00:00.000Z",
+        "last_seen": "2025-03-08T00:00:00.000Z",
+        "whitelisted": true
+    }
+}
