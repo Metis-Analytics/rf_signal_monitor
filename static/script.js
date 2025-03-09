@@ -1,0 +1,1045 @@
+// Global variables
+let ws = null;
+let spectrumChart = null;
+let showWhitelistedOnly = false;
+let deviceModal = null;
+let currentDevices = [];
+let map = null;
+let deviceMarkers = {};
+let geofenceCircle = null;
+let geofenceEnabled = false;
+let userMarker = null;
+let userLocation = { lat: 37.7749, lng: -122.4194 }; // Default location (San Francisco)
+let mapInitialized = false;
+let usingGPS = false; // Flag to indicate if we're using GPS data from the server
+
+// Device status tracking
+const deviceStatus = {
+    active: {},    // Currently detected devices
+    inactive: {}   // Previously detected devices that are no longer active
+};
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize components
+    initializeWebSocket();
+    initializeChart();
+    initializeModal();
+    
+    // Get user's browser location as fallback
+    getUserLocation();
+    
+    // Set up event listeners
+    document.getElementById('toggleGeofenceBtn').addEventListener('click', toggleGeofence);
+    document.getElementById('setGeofenceBtn').addEventListener('click', setGeofence);
+    document.getElementById('toggleWhitelistBtn').addEventListener('click', toggleWhitelistView);
+    document.getElementById('addWhitelistBtn').addEventListener('click', addToWhitelist);
+    document.getElementById('removeWhitelistBtn').addEventListener('click', removeFromWhitelist);
+    
+    // Initialize the whitelist toggle button text
+    const toggleBtn = document.getElementById('toggleWhitelistBtn');
+    if (toggleBtn) {
+        toggleBtn.textContent = showWhitelistedOnly ? 'Show All Devices' : 'Show Whitelisted Only';
+        toggleBtn.classList.toggle('btn-success', showWhitelistedOnly);
+        toggleBtn.classList.toggle('btn-outline-success', !showWhitelistedOnly);
+    }
+    
+    // Initialize the whitelist status element
+    const whitelistStatus = document.getElementById('whitelistStatus');
+    if (whitelistStatus) {
+        whitelistStatus.innerHTML = 'Whitelist: <span class="badge bg-secondary">Loading...</span>';
+    }
+    
+    // Initialize the whitelist filter status
+    const filterStatus = document.getElementById('whitelistFilterStatus');
+    if (filterStatus) {
+        filterStatus.textContent = showWhitelistedOnly ? 'Showing Whitelisted Only' : 'Showing All';
+        filterStatus.className = showWhitelistedOnly ? 'badge bg-warning ms-2' : 'badge bg-success ms-2';
+    }
+    
+    // Fetch initial device data
+    fetch('/api/devices')
+        .then(response => response.json())
+        .then(data => {
+            currentDevices = data.devices || [];
+            updateDeviceList(currentDevices);
+            updateWhitelistCount();
+            updateDeviceStatusCount();
+        })
+        .catch(error => {
+            console.error('Error fetching initial device data:', error);
+        });
+});
+
+// Initialize WebSocket connection
+function initializeWebSocket() {
+    try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        console.log(`Connecting to WebSocket at ${wsUrl}`);
+        
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+            console.log('WebSocket connection established');
+            document.getElementById('status').textContent = 'Status: Connected';
+            document.getElementById('status').classList.add('connected');
+            document.getElementById('status').classList.remove('disconnected');
+        };
+        
+        ws.onclose = (event) => {
+            console.log(`WebSocket closed with code: ${event.code}, reason: ${event.reason}`);
+            document.getElementById('status').textContent = 'Status: Disconnected';
+            document.getElementById('status').classList.remove('connected');
+            document.getElementById('status').classList.add('disconnected');
+            // Try to reconnect after 5 seconds
+            setTimeout(initializeWebSocket, 5000);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+        
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                console.log("Received data:", data);
+                
+                // Store current devices
+                currentDevices = data.devices || [];
+                
+                // Track active and inactive devices
+                const now = new Date();
+                const activeDeviceIds = new Set();
+                
+                // First, mark all devices as inactive
+                for (const deviceId in deviceStatus.active) {
+                    deviceStatus.inactive[deviceId] = deviceStatus.active[deviceId];
+                    delete deviceStatus.active[deviceId];
+                }
+                
+                // Then update with current data
+                currentDevices.forEach(device => {
+                    const deviceId = device.id;
+                    const lastSeen = new Date(device.last_seen);
+                    const timeDiff = now - lastSeen; // Time difference in milliseconds
+                    
+                    // Consider a device active if it was seen in the last 30 seconds
+                    if (timeDiff < 30000) {
+                        deviceStatus.active[deviceId] = device;
+                        if (deviceStatus.inactive[deviceId]) {
+                            delete deviceStatus.inactive[deviceId];
+                        }
+                        activeDeviceIds.add(deviceId);
+                    } else {
+                        deviceStatus.inactive[deviceId] = device;
+                    }
+                });
+                
+                // Add visual indicators for active/inactive status
+                currentDevices.forEach(device => {
+                    device.isActive = activeDeviceIds.has(device.id);
+                });
+                
+                // Update UI components
+                updateDeviceList(currentDevices);
+                updateSpectrum(data);
+                updateWhitelistCount();
+                updateDeviceStatusCount();
+                
+                // Update map markers if map is initialized
+                if (mapInitialized && map) {
+                    updateMarkers(currentDevices);
+                }
+                
+                // Check if we have monitoring station location
+                if (data.monitoring_station) {
+                    const gpsLocation = {
+                        lat: data.monitoring_station.latitude,
+                        lng: data.monitoring_station.longitude
+                    };
+                    
+                    console.log("Monitoring station location received:", data.monitoring_station);
+                    
+                    // Update user location with GPS data
+                    userLocation = gpsLocation;
+                    usingGPS = true;
+                    
+                    // Update status to show we're using GPS
+                    const statusElement = document.getElementById('status');
+                    if (statusElement) {
+                        // Check if this is real GPS data or simulated
+                        const isSimulated = data.monitoring_station.simulated === true;
+                        const numSatellites = data.monitoring_station.num_satellites || 0;
+                        const hdop = parseFloat(data.monitoring_station.hdop) || 0;
+                        
+                        // Create a more detailed status message
+                        let statusText = isSimulated ? 
+                            'Status: Connected (Simulated GPS)' : 
+                            `Status: Connected (Real GPS - Satellites: ${numSatellites}, HDOP: ${hdop.toFixed(1)})`;
+                        
+                        statusElement.textContent = statusText;
+                        
+                        // Add a class to indicate simulated vs real
+                        if (isSimulated) {
+                            statusElement.classList.add('simulated');
+                            statusElement.classList.remove('real-gps');
+                        } else {
+                            statusElement.classList.add('real-gps');
+                            statusElement.classList.remove('simulated');
+                        }
+                    }
+                    
+                    // Update user marker with GPS data
+                    if (map && userMarker) {
+                        userMarker.setLatLng([userLocation.lat, userLocation.lng]);
+                        
+                        // Update the popup content with GPS details
+                        const popupContent = createMonitoringStationPopup(data.monitoring_station);
+                        userMarker.setPopupContent(popupContent);
+                        
+                        // Only center map on GPS location if it's the first time or significant change
+                        if (!mapInitialized || getDistance(userMarker.getLatLng(), [userLocation.lat, userLocation.lng]) > 100) {
+                            map.setView([userLocation.lat, userLocation.lng], 13);
+                        }
+                    } else if (!mapInitialized) {
+                        // Initialize map with the location data
+                        initializeMap(data.devices || []);
+                    }
+                }
+                
+                // Initialize map after we get the first data if not already initialized
+                if (!mapInitialized && data.devices && data.devices.length > 0) {
+                    initializeMap(data.devices);
+                }
+                
+                // Update device markers on the map
+                if (data.devices && data.devices.length > 0) {
+                    updateMarkers(data.devices);
+                }
+                
+                // Store the latest data for reference
+                window.latestData = data;
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error);
+            }
+        };
+    } catch (error) {
+        console.error('Error initializing WebSocket:', error);
+    }
+}
+
+// Process incoming device data
+function processDeviceData(data) {
+    if (!data.devices) return;
+    
+    // Process each device
+    data.devices.forEach(device => {
+        // Set device status (active/inactive)
+        const now = new Date();
+        const lastSeen = new Date(device.last_seen);
+        const diffSeconds = Math.floor((now - lastSeen) / 1000);
+        
+        // Consider device active if seen in the last 30 seconds
+        device.isActive = diffSeconds <= 30;
+        
+        // Update device status tracking
+        if (device.isActive) {
+            deviceStatus.active[device.id] = device;
+            delete deviceStatus.inactive[device.id];
+        } else {
+            deviceStatus.inactive[device.id] = device;
+            delete deviceStatus.active[device.id];
+        }
+        
+        // Check if device is inside geofence
+        if (geofenceCircle && map) {
+            const deviceLatLng = L.latLng(
+                device.location.latitude || device.location.lat,
+                device.location.longitude || device.location.lng
+            );
+            
+            const geofenceLatLng = geofenceCircle.getLatLng();
+            const distance = getDistance(deviceLatLng, geofenceLatLng);
+            
+            device.insideGeofence = distance <= geofenceCircle.getRadius();
+        }
+    });
+    
+    // Update current devices list
+    currentDevices = data.devices;
+    
+    // Update UI
+    updateDeviceList(currentDevices);
+    updateSpectrum(data);
+    updateWhitelistCount();
+    updateDeviceStatusCount();
+    
+    // Update map if initialized
+    if (mapInitialized) {
+        updateMarkers(currentDevices);
+    }
+}
+
+// Calculate distance between two points in meters
+function getDistance(point1, point2) {
+    if (!map) return 0;
+    return map.distance(point1, point2);
+}
+
+// Get user's current location from browser (as fallback)
+function getUserLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                // Only use browser location if we're not using GPS
+                if (!usingGPS) {
+                    userLocation = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    
+                    console.log("Browser location detected:", userLocation);
+                    
+                    // If map is already initialized, update the user marker
+                    if (map && userMarker) {
+                        userMarker.setLatLng([userLocation.lat, userLocation.lng]);
+                        map.setView([userLocation.lat, userLocation.lng], 13);
+                    } else if (!mapInitialized) {
+                        // Initialize map with browser location if we haven't received device data yet
+                        initializeMap();
+                    }
+                }
+            },
+            function(error) {
+                console.error("Error getting browser location:", error);
+            }
+        );
+    } else {
+        console.log("Geolocation is not supported by this browser");
+    }
+}
+
+// Initialize the spectrum chart
+function initializeChart() {
+    const ctx = document.getElementById('spectrumChart').getContext('2d');
+    spectrumChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'RF Spectrum',
+                data: [],
+                borderColor: 'rgb(75, 192, 192)',
+                tension: 0.1,
+                pointRadius: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Frequency (MHz)'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Power (dB)'
+                    }
+                }
+            },
+            animation: false
+        }
+    });
+}
+
+// Initialize Leaflet map
+function initializeMap(devices) {
+    if (!document.getElementById('map')) {
+        console.error("Map container not found");
+        return;
+    }
+
+    try {
+        // Initialize the map with the user's location
+        map = L.map('map').setView([userLocation.lat, userLocation.lng], 13);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        
+        // Add user marker at location
+        userMarker = L.marker([userLocation.lat, userLocation.lng], {
+            icon: L.divIcon({
+                className: 'user-marker',
+                html: '<div class="user-marker-icon"></div>',
+                iconSize: [20, 20]
+            })
+        }).addTo(map);
+        
+        // Add a popup with detailed GPS information
+        if (window.latestData && window.latestData.monitoring_station) {
+            const popupContent = createMonitoringStationPopup(window.latestData.monitoring_station);
+            userMarker.bindPopup(popupContent).openPopup();
+        } else {
+            // Fallback if we don't have the latest data
+            const locationSource = usingGPS ? "GPS" : "Browser";
+            userMarker.bindPopup(`Monitoring Station (${locationSource})`).openPopup();
+        }
+        
+        // Listen for map clicks to set geofence
+        map.on('click', function(e) {
+            if (window.settingGeofence) {
+                setGeofenceAtPosition(e.latlng);
+                window.settingGeofence = false;
+            }
+        });
+        
+        mapInitialized = true;
+        console.log("Map initialized successfully with center:", userLocation);
+        
+        // Update markers for all devices if provided
+        if (devices && devices.length > 0) {
+            updateMarkers(devices);
+        }
+    } catch (error) {
+        console.error("Error initializing map:", error);
+    }
+}
+
+// Set geofence at the clicked position
+function setGeofenceAtPosition(latlng) {
+    // Remove existing geofence
+    if (geofenceCircle) {
+        map.removeLayer(geofenceCircle);
+    }
+    
+    // Create new geofence (500m radius)
+    geofenceCircle = L.circle(latlng, {
+        color: 'red',
+        fillColor: '#f03',
+        fillOpacity: 0.2,
+        radius: 500
+    }).addTo(map);
+    
+    geofenceEnabled = true;
+    
+    // Check existing devices against new geofence
+    checkDevicesAgainstGeofence();
+}
+
+// Toggle geofence visibility
+function toggleGeofence() {
+    if (!geofenceCircle) return;
+    
+    geofenceEnabled = !geofenceEnabled;
+    
+    if (geofenceEnabled) {
+        map.addLayer(geofenceCircle);
+    } else {
+        map.removeLayer(geofenceCircle);
+    }
+    
+    // Update device status
+    checkDevicesAgainstGeofence();
+}
+
+// Enable geofence creation mode
+function setGeofence() {
+    window.settingGeofence = true;
+    alert("Click on the map to place a geofence");
+}
+
+// Check if devices are inside the geofence
+function checkDevicesAgainstGeofence() {
+    if (!geofenceCircle || !geofenceEnabled) return;
+    
+    const geofenceCenter = geofenceCircle.getLatLng();
+    const geofenceRadius = geofenceCircle.getRadius();
+    
+    currentDevices.forEach(device => {
+        if (device.location) {
+            // Convert location format if needed
+            let deviceLat = device.location.lat;
+            let deviceLng = device.location.lng;
+            
+            if (device.location.latitude !== undefined) {
+                deviceLat = device.location.latitude;
+                deviceLng = device.location.longitude;
+            }
+            
+            const deviceLatLng = L.latLng(deviceLat, deviceLng);
+            const distance = deviceLatLng.distanceTo(geofenceCenter);
+            device.insideGeofence = distance <= geofenceRadius;
+            
+            // Update marker appearance
+            updateMarkerForDevice(device);
+        }
+    });
+    
+    // Update device list display
+    updateDeviceList(currentDevices);
+}
+
+// Update markers on the map
+function updateMarkers(devices) {
+    if (!map || !mapInitialized) {
+        console.warn("Map not initialized yet, can't update markers");
+        return;
+    }
+    
+    console.log("Updating map markers for", devices.length, "devices");
+    
+    // Keep track of device locations for map centering
+    let validLocations = [];
+    
+    devices.forEach(device => {
+        // If device doesn't have location, skip it
+        if (!device.location) {
+            console.warn("Device missing location:", device.id);
+            return;
+        }
+        
+        // Convert location format if needed
+        let deviceLat, deviceLng;
+        
+        if (device.location.latitude !== undefined && device.location.longitude !== undefined) {
+            deviceLat = device.location.latitude;
+            deviceLng = device.location.longitude;
+            device.location = {
+                lat: deviceLat,
+                lng: deviceLng
+            };
+        } else if (device.location.lat !== undefined && device.location.lng !== undefined) {
+            deviceLat = device.location.lat;
+            deviceLng = device.location.lng;
+        } else {
+            console.warn("Invalid location format for device:", device.id, device.location);
+            return;
+        }
+        
+        // Validate coordinates
+        if (isNaN(deviceLat) || isNaN(deviceLng) || 
+            deviceLat < -90 || deviceLat > 90 || 
+            deviceLng < -180 || deviceLng > 180) {
+            console.warn("Invalid coordinates for device:", device.id, deviceLat, deviceLng);
+            return;
+        }
+        
+        // Add to valid locations for map centering
+        validLocations.push([deviceLat, deviceLng]);
+        
+        // Check if device is inside geofence
+        if (geofenceCircle && geofenceEnabled) {
+            const geofenceCenter = geofenceCircle.getLatLng();
+            const geofenceRadius = geofenceCircle.getRadius();
+            const deviceLatLng = L.latLng(deviceLat, deviceLng);
+            device.insideGeofence = deviceLatLng.distanceTo(geofenceCenter) <= geofenceRadius;
+        }
+        
+        // Update or create marker
+        updateMarkerForDevice(device);
+    });
+    
+    console.log("Valid device locations:", validLocations.length);
+    
+    // Clean up markers for devices that no longer exist
+    Object.keys(deviceMarkers).forEach(id => {
+        if (!devices.find(d => d.id === id)) {
+            map.removeLayer(deviceMarkers[id]);
+            delete deviceMarkers[id];
+        }
+    });
+}
+
+// Update or create marker for a device
+function updateMarkerForDevice(device) {
+    try {
+        // Skip if device has no location
+        if (!device.location) return;
+        
+        // Get coordinates
+        let lat, lng;
+        if (device.location.latitude !== undefined && device.location.longitude !== undefined) {
+            lat = device.location.latitude;
+            lng = device.location.longitude;
+        } else if (device.location.lat !== undefined && device.location.lng !== undefined) {
+            lat = device.location.lat;
+            lng = device.location.lng;
+        } else {
+            console.warn("Invalid location format for device:", device.id);
+            return;
+        }
+        
+        // Determine marker color based on whitelist status, activity status, and geofence
+        let markerColor = 'blue';
+        let markerOpacity = 1.0;
+        
+        if (device.whitelisted) {
+            markerColor = 'green';
+        } else if (device.insideGeofence) {
+            markerColor = 'red';
+        }
+        
+        // Reduce opacity for inactive devices
+        if (!device.isActive) {
+            markerOpacity = 0.5;
+        }
+        
+        // Create marker icon
+        const signalStrength = getSignalStrength(device.power);
+        const markerIcon = L.divIcon({
+            className: `device-marker signal-${signalStrength}`,
+            html: `<div class="device-marker-icon ${markerColor}" style="opacity: ${markerOpacity};"></div>`,
+            iconSize: [20, 20]
+        });
+        
+        // Create or update marker
+        if (device.id in deviceMarkers) {
+            // Update existing marker
+            deviceMarkers[device.id].setLatLng([lat, lng]);
+            deviceMarkers[device.id].setIcon(markerIcon);
+            
+            // Update popup content
+            const popupContent = `
+                <strong>${device.name || 'Unknown Device'}</strong><br>
+                Type: ${device.type || 'Unknown'}<br>
+                Frequency: ${device.frequency?.toFixed(2) || 'Unknown'} MHz<br>
+                Signal: ${device.power?.toFixed(2) || 'Unknown'} dB<br>
+                ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
+                ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
+            `;
+            deviceMarkers[device.id].getPopup().setContent(popupContent);
+        } else {
+            // Create new marker
+            const marker = L.marker([lat, lng], {
+                icon: markerIcon
+            });
+            
+            // Add popup
+            const popupContent = `
+                <strong>${device.name || 'Unknown Device'}</strong><br>
+                Type: ${device.type || 'Unknown'}<br>
+                Frequency: ${device.frequency?.toFixed(2) || 'Unknown'} MHz<br>
+                Signal: ${device.power?.toFixed(2) || 'Unknown'} dB<br>
+                ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
+                ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
+            `;
+            marker.bindPopup(popupContent);
+            
+            // Add click event to show device details
+            marker.on('click', function() {
+                showDeviceDetails(device);
+            });
+            
+            // Add to map and store in deviceMarkers
+            marker.addTo(map);
+            deviceMarkers[device.id] = marker;
+        }
+    } catch (error) {
+        console.error("Error updating marker for device:", error, device);
+    }
+}
+
+// Initialize Bootstrap modal
+function initializeModal() {
+    deviceModal = new bootstrap.Modal(document.getElementById('deviceModal'));
+}
+
+// Update the device list
+function updateDeviceList(devices) {
+    currentDevices = devices;
+    const deviceList = document.getElementById('deviceList');
+    deviceList.innerHTML = '';
+    
+    devices
+        .filter(device => !showWhitelistedOnly || device.whitelisted)
+        .forEach(device => {
+            const deviceElement = document.createElement('a');
+            deviceElement.className = `list-group-item list-group-item-action device-item d-flex justify-content-between align-items-center 
+                ${device.whitelisted ? 'whitelisted' : ''} 
+                ${device.insideGeofence === false ? 'geofence-alert' : ''}
+                ${!device.isActive ? 'inactive-device' : ''}`;
+            deviceElement.onclick = () => showDeviceDetails(device);
+            
+            const signalStrength = getSignalStrength(device.power);
+            
+            // Format last seen time
+            let lastSeenText = '';
+            if (device.last_seen) {
+                const lastSeen = new Date(device.last_seen);
+                const now = new Date();
+                const diffSeconds = Math.floor((now - lastSeen) / 1000);
+                
+                if (diffSeconds < 60) {
+                    lastSeenText = `${diffSeconds}s ago`;
+                } else if (diffSeconds < 3600) {
+                    lastSeenText = `${Math.floor(diffSeconds / 60)}m ago`;
+                } else if (diffSeconds < 86400) {
+                    lastSeenText = `${Math.floor(diffSeconds / 3600)}h ago`;
+                } else {
+                    lastSeenText = `${Math.floor(diffSeconds / 86400)}d ago`;
+                }
+            }
+            
+            deviceElement.innerHTML = `
+                <div>
+                    <div class="d-flex align-items-center">
+                        <span class="signal-indicator ${signalStrength.class}"></span>
+                        <strong>${device.name || `Device at ${device.frequency.toFixed(2)} MHz`}</strong>
+                        ${device.whitelisted ? '<span class="badge bg-success ms-2">Whitelisted</span>' : ''}
+                        ${device.insideGeofence === false ? '<span class="badge bg-danger ms-2">Outside Geofence</span>' : ''}
+                        ${!device.isActive ? '<span class="badge bg-secondary ms-2">Inactive</span>' : ''}
+                    </div>
+                    <div class="device-frequency">
+                        ${device.type || 'Unknown'} 
+                        ${device.simulated_id ? `• ID: ${device.simulated_id}` : ''}
+                        • Last seen: ${lastSeenText}
+                    </div>
+                </div>
+                <span class="badge bg-primary rounded-pill signal-strength">${device.power.toFixed(1)} dB</span>
+            `;
+            
+            deviceList.appendChild(deviceElement);
+        });
+}
+
+// Update the spectrum chart
+function updateSpectrum(data) {
+    if (!data.devices || !data.devices.length) return;
+    
+    const frequencies = data.devices.map(d => d.frequency);
+    const powers = data.devices.map(d => d.power);
+    
+    spectrumChart.data.labels = frequencies;
+    spectrumChart.data.datasets[0].data = powers;
+    spectrumChart.update();
+}
+
+// Show device details in modal
+function showDeviceDetails(device) {
+    document.getElementById('deviceId').value = device.id;
+    document.getElementById('deviceName').value = device.name || '';
+    
+    // Set device type in dropdown
+    const deviceTypeSelect = document.getElementById('deviceType');
+    const deviceType = device.type || 'Unknown';
+    
+    // Find and select the matching option
+    let optionFound = false;
+    for (let i = 0; i < deviceTypeSelect.options.length; i++) {
+        if (deviceTypeSelect.options[i].value === deviceType) {
+            deviceTypeSelect.selectedIndex = i;
+            optionFound = true;
+            break;
+        }
+    }
+    
+    // If no matching option found, select "Unknown"
+    if (!optionFound) {
+        for (let i = 0; i < deviceTypeSelect.options.length; i++) {
+            if (deviceTypeSelect.options[i].value === 'Unknown') {
+                deviceTypeSelect.selectedIndex = i;
+                break;
+            }
+        }
+    }
+    
+    document.getElementById('deviceFreq').value = device.frequency.toFixed(2);
+    document.getElementById('deviceImsi').value = device.simulated_id || '';
+    
+    if (device.location) {
+        let lat, lng;
+        if (device.location.latitude !== undefined) {
+            lat = device.location.latitude;
+            lng = device.location.longitude;
+        } else {
+            lat = device.location.lat;
+            lng = device.location.lng;
+        }
+        document.getElementById('deviceLat').value = parseFloat(lat).toFixed(6);
+        document.getElementById('deviceLng').value = parseFloat(lng).toFixed(6);
+    }
+    
+    document.getElementById('deviceFirstSeen').value = new Date(device.first_seen).toLocaleString();
+    document.getElementById('deviceLastSeen').value = new Date(device.last_seen).toLocaleString();
+    
+    // Update whitelist checkbox
+    const whitelistedCheckbox = document.getElementById('deviceWhitelisted');
+    if (whitelistedCheckbox) {
+        whitelistedCheckbox.checked = device.whitelisted || false;
+    }
+    
+    // Update active checkbox
+    const activeCheckbox = document.getElementById('deviceActive');
+    if (activeCheckbox) {
+        activeCheckbox.checked = device.isActive || false;
+    }
+    
+    const addBtn = document.getElementById('addWhitelistBtn');
+    const removeBtn = document.getElementById('removeWhitelistBtn');
+    
+    if (device.whitelisted) {
+        addBtn.style.display = 'none';
+        removeBtn.style.display = 'block';
+    } else {
+        addBtn.style.display = 'block';
+        removeBtn.style.display = 'none';
+    }
+    
+    deviceModal.show();
+}
+
+// Add device to whitelist
+async function addToWhitelist() {
+    const deviceId = document.getElementById('deviceId').value;
+    const device = currentDevices.find(d => d.id === deviceId);
+    
+    if (!device) {
+        console.error("Device not found in currentDevices");
+        alert("Error: Device not found");
+        return;
+    }
+    
+    try {
+        console.log("Adding device to whitelist:", deviceId);
+        
+        const updatedDevice = {
+            name: document.getElementById('deviceName').value,
+            type: document.getElementById('deviceType').value,
+            frequency: parseFloat(document.getElementById('deviceFreq').value),
+            power: device.power || 0,
+            first_seen: device.first_seen || new Date().toISOString(),
+            last_seen: device.last_seen || new Date().toISOString()
+        };
+        
+        console.log("Device data to send:", updatedDevice);
+        
+        const response = await fetch(`/api/whitelist/${deviceId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updatedDevice)
+        });
+        
+        console.log("Response status:", response.status);
+        
+        if (response.ok) {
+            const responseData = await response.json();
+            console.log("Device added to whitelist successfully:", responseData);
+            
+            // Update the device in the current devices list
+            const deviceIndex = currentDevices.findIndex(d => d.id === deviceId);
+            if (deviceIndex !== -1) {
+                currentDevices[deviceIndex].whitelisted = true;
+                currentDevices[deviceIndex].name = updatedDevice.name;
+                currentDevices[deviceIndex].type = updatedDevice.type;
+            }
+            
+            // Close the modal first
+            if (deviceModal) {
+                deviceModal.hide();
+            }
+            
+            // Update the device list and markers
+            updateDeviceList(currentDevices);
+            if (mapInitialized && map) {
+                updateMarkers(currentDevices);
+            }
+            
+            // Update whitelist count
+            updateWhitelistCount();
+        } else {
+            let errorMessage = "Unknown error";
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || "Failed to add device to whitelist";
+                console.error('Failed to add device to whitelist:', errorData);
+            } catch (e) {
+                console.error('Error parsing error response:', e);
+            }
+            alert('Failed to add device to whitelist: ' + errorMessage);
+        }
+    } catch (error) {
+        console.error('Error adding to whitelist:', error);
+        alert('Failed to add device to whitelist: ' + error.message);
+    }
+}
+
+// Remove device from whitelist
+async function removeFromWhitelist() {
+    const deviceId = document.getElementById('deviceId').value;
+    
+    if (!deviceId) {
+        console.error("No device ID found");
+        return;
+    }
+    
+    try {
+        console.log("Removing device from whitelist:", deviceId);
+        
+        const response = await fetch(`/api/whitelist/${deviceId}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        console.log("Response status:", response.status);
+        
+        if (response.ok) {
+            const responseData = await response.json();
+            console.log("Device removed from whitelist successfully:", responseData);
+            
+            // Update the device in the current devices list
+            const deviceIndex = currentDevices.findIndex(d => d.id === deviceId);
+            if (deviceIndex !== -1) {
+                currentDevices[deviceIndex].whitelisted = false;
+            }
+            
+            // Update the device list and markers
+            updateDeviceList(currentDevices);
+            if (mapInitialized && map) {
+                updateMarkers(currentDevices);
+            }
+            
+            // Update whitelist count
+            updateWhitelistCount();
+            
+            // Close the modal
+            deviceModal.hide();
+            
+            // Show success message
+            alert("Device removed from whitelist successfully");
+        } else {
+            let errorMessage = "Unknown error";
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || "Failed to remove device from whitelist";
+                console.error('Failed to remove device from whitelist:', errorData);
+            } catch (e) {
+                console.error('Error parsing error response:', e);
+            }
+            alert('Failed to remove device from whitelist: ' + errorMessage);
+        }
+    } catch (error) {
+        console.error('Error removing from whitelist:', error);
+        alert('Failed to remove device from whitelist: ' + error.message);
+    }
+}
+
+// Update whitelist count in the header
+function updateWhitelistCount() {
+    console.log("Updating whitelist count");
+    
+    // Count whitelisted devices
+    const whitelistedDevices = currentDevices.filter(device => device.whitelisted);
+    console.log(`Found ${whitelistedDevices.length} whitelisted devices`);
+    
+    // Update the counter in the header
+    const whitelistStatus = document.getElementById('whitelistStatus');
+    if (whitelistStatus) {
+        const badgeClass = whitelistedDevices.length > 0 ? 'bg-success' : 'bg-secondary';
+        const plural = whitelistedDevices.length !== 1 ? 's' : '';
+        whitelistStatus.innerHTML = `Whitelist: <span class="badge ${badgeClass}">${whitelistedDevices.length} device${plural}</span>`;
+        console.log("Updated whitelist status element");
+    } else {
+        console.error("Could not find whitelistStatus element");
+    }
+    
+    // Also update the filter status badge
+    const filterStatus = document.getElementById('whitelistFilterStatus');
+    if (filterStatus) {
+        if (showWhitelistedOnly) {
+            filterStatus.textContent = 'Showing Whitelisted Only';
+            filterStatus.className = 'badge bg-warning ms-2';
+        } else {
+            filterStatus.textContent = 'Showing All';
+            filterStatus.className = 'badge bg-success ms-2';
+        }
+    }
+}
+
+// Update device status counter in the header
+function updateDeviceStatusCount() {
+    const activeCount = Object.keys(deviceStatus.active).length;
+    const inactiveCount = Object.keys(deviceStatus.inactive).length;
+    
+    console.log(`Device status: ${activeCount} active, ${inactiveCount} inactive`);
+    
+    const deviceStatusElement = document.getElementById('deviceStatus');
+    if (deviceStatusElement) {
+        deviceStatusElement.innerHTML = `Devices: <span class="badge bg-primary">${activeCount} active</span> / <span class="badge bg-secondary">${inactiveCount} inactive</span>`;
+    }
+}
+
+// Toggle between all devices and whitelisted only
+function toggleWhitelistView() {
+    showWhitelistedOnly = !showWhitelistedOnly;
+    
+    // Update the button text and badge
+    const toggleBtn = document.getElementById('toggleWhitelistBtn');
+    const statusBadge = document.getElementById('whitelistFilterStatus');
+    
+    if (showWhitelistedOnly) {
+        toggleBtn.textContent = 'Show All Devices';
+        toggleBtn.classList.remove('btn-outline-success');
+        toggleBtn.classList.add('btn-success');
+        statusBadge.textContent = 'Showing Whitelisted Only';
+        statusBadge.classList.remove('bg-success');
+        statusBadge.classList.add('bg-warning');
+    } else {
+        toggleBtn.textContent = 'Show Whitelisted Only';
+        toggleBtn.classList.remove('btn-success');
+        toggleBtn.classList.add('btn-outline-success');
+        statusBadge.textContent = 'Showing All';
+        statusBadge.classList.remove('bg-warning');
+        statusBadge.classList.add('bg-success');
+    }
+    
+    // Update the device list
+    updateDeviceList(currentDevices);
+}
+
+// Helper function to determine signal strength
+function getSignalStrength(power) {
+    if (power > -30) {
+        return { class: 'signal-strong', text: 'Strong' };
+    } else if (power > -60) {
+        return { class: 'signal-medium', text: 'Medium' };
+    } else {
+        return { class: 'signal-weak', text: 'Weak' };
+    }
+}
+
+// Helper function to create a detailed popup for the monitoring station
+function createMonitoringStationPopup(stationData) {
+    if (!stationData) return "Monitoring Station";
+    
+    const isSimulated = stationData.simulated === true;
+    const sourceText = isSimulated ? "Simulated GPS" : "Real GPS";
+    const satellites = stationData.num_satellites || 0;
+    const hdop = parseFloat(stationData.hdop) || 0;
+    const altitude = parseFloat(stationData.altitude) || 0;
+    
+    let popupContent = `<div class="station-popup">
+        <h4>Monitoring Station</h4>
+        <p><strong>Source:</strong> ${sourceText}</p>
+        <p><strong>Coordinates:</strong> ${stationData.latitude.toFixed(6)}, ${stationData.longitude.toFixed(6)}</p>`;
+    
+    if (!isSimulated) {
+        popupContent += `
+        <p><strong>Satellites:</strong> ${satellites}</p>
+        <p><strong>HDOP:</strong> ${hdop.toFixed(1)}</p>
+        <p><strong>Altitude:</strong> ${altitude.toFixed(1)} m</p>`;
+    }
+    
+    popupContent += `</div>`;
+    
+    return popupContent;
+}

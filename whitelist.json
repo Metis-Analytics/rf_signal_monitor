@@ -1,0 +1,170 @@
+{
+  "dev_910.7": {
+    "name": "Known",
+    "type": "Unknown",
+    "frequency": 910.6965923309326,
+    "first_seen": "2025-03-07T12:03:31.533342",
+    "last_seen": "2025-03-07T12:03:34.241182",
+    "whitelisted": true
+  },
+  "a2268098": {
+    "name": "Known",
+    "type": "",
+    "frequency": 1900000000.0,
+    "first_seen": "2025-03-08T09:22:39.661028",
+    "last_seen": "2025-03-08T09:23:23.142251",
+    "whitelisted": true
+  },
+  "ffbde172": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 1900000000.0,
+    "first_seen": "2025-03-08T09:23:22.970380",
+    "last_seen": "2025-03-08T09:24:11.497490",
+    "whitelisted": true
+  },
+  "161e5a05-5fe8-41f5-96d2-14af6bdda2ad": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 1802.65,
+    "first_seen": "2025-03-08T09:24:11.430706",
+    "last_seen": "2025-03-08T09:24:54.772736",
+    "whitelisted": true
+  },
+  "7d1701ee": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T09:29:58.274435",
+    "last_seen": "2025-03-08T09:30:42.315312",
+    "whitelisted": true
+  },
+  "50966c53": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T09:30:42.067950",
+    "last_seen": "2025-03-08T09:32:09.890745",
+    "whitelisted": true
+  },
+  "893577a9": {
+    "name": "Known",
+    "type": "WiFi",
+    "frequency": 900000000.0,
+    "first_seen": "2025-03-08T09:32:51.951866",
+    "last_seen": "2025-03-08T09:34:24.602328",
+    "whitelisted": true
+  },
+  "4a0520da": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T09:41:03.658385",
+    "last_seen": "2025-03-08T09:42:30.859513",
+    "whitelisted": true
+  },
+  "0b24faea-d521-4b06-b967-7daf3e242f31": {
+    "name": "Known",
+    "type": "Unknown",
+    "frequency": 1902.81,
+    "first_seen": "2025-03-08T09:45:31.047343",
+    "last_seen": "2025-03-08T09:46:13.251042",
+    "whitelisted": true
+  },
+  "14b263f4": {
+    "name": "Known",
+    "type": "Cellular",
+    "frequency": 700000000.0,
+    "first_seen": "2025-03-08T09:54:42.172952",
+    "last_seen": "2025-03-08T09:56:22.630136",
+    "whitelisted": true
+  },
+  "4e10eb1b": {
+    "name": "",
+    "type": "GSM",
+    "frequency": 900000000.0,
+    "first_seen": "2025-03-08T10:35:19.405416",
+    "last_seen": "2025-03-08T10:37:07.345926",
+    "whitelisted": true
+  },
+  "89584e60-37cb-404b-89fe-029cdd2ac053": {
+    "name": "Known",
+    "type": "UMTS",
+    "frequency": 699.93,
+    "first_seen": "2025-03-08T10:44:58.183335",
+    "last_seen": "2025-03-08T10:45:43.454065",
+    "whitelisted": true
+  },
+  "140bace3": {
+    "name": "Known",
+    "type": "LTE",
+    "frequency": 700000000.0,
+    "first_seen": "2025-03-08T10:44:53.050610",
+    "last_seen": "2025-03-08T10:46:26.720703",
+    "whitelisted": true
+  },
+  "b79d6051-a964-4c3c-bc40-a9c6c13c0157": {
+    "name": "Known",
+    "type": "LTE",
+    "frequency": 700.23,
+    "first_seen": "2025-03-08T10:54:26.620924",
+    "last_seen": "2025-03-08T10:55:35.603164",
+    "whitelisted": true
+  },
+  "8adb5b3c-ff31-43ff-9453-1879e1fecce2": {
+    "name": "MY Device",
+    "type": "UMTS",
+    "frequency": 853.54,
+    "first_seen": "2025-03-08T10:57:51.191402",
+    "last_seen": "2025-03-08T11:02:31.264440",
+    "whitelisted": true
+  },
+  "da22db92-85f9-4e28-8372-fd469ca177fc": {
+    "name": "Known",
+    "type": "GSM",
+    "frequency": 915.09,
+    "first_seen": "2025-03-08T12:14:12.634754",
+    "last_seen": "2025-03-08T12:16:24.387590",
+    "whitelisted": true
+  },
+  "f3db5fe0-05fd-4606-a30f-36d28079538a": {
+    "name": "Known",
+    "type": "UMTS",
+    "frequency": 904.91,
+    "first_seen": "2025-03-08T13:07:24.012572",
+    "last_seen": "2025-03-08T13:07:34.702961",
+    "whitelisted": true
+  },
+  "f19dfa0d": {
+    "name": "Known",
+    "type": "GSM",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T13:03:40.042792",
+    "last_seen": "2025-03-08T13:09:45.545726",
+    "whitelisted": true
+  },
+  "8ff2c8eb": {
+    "name": "Known 2",
+    "type": "LTE",
+    "frequency": 700000000.0,
+    "first_seen": "2025-03-08T13:10:34.585224",
+    "last_seen": "2025-03-08T13:11:16.913755",
+    "whitelisted": true
+  },
+  "a83d537b": {
+    "name": "Known",
+    "type": "GSM",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T23:24:58.720232",
+    "last_seen": "2025-03-08T23:25:43.209363",
+    "whitelisted": true
+  },
+  "2807201d": {
+    "name": "Known 2",
+    "type": "GSM",
+    "frequency": 915000000.0,
+    "first_seen": "2025-03-08T23:25:43.063240",
+    "last_seen": "2025-03-08T23:26:26.038184",
+    "whitelisted": true
+  }
+}

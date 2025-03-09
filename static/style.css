@@ -1,0 +1,184 @@
+body {
+    background-color: #f8f9fa;
+    padding-bottom: 2rem;
+}
+
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1rem;
+}
+
+.device-item {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.device-item:hover {
+    background-color: #f8f9fa;
+}
+
+.device-item.whitelisted {
+    border-left: 4px solid #198754;
+}
+
+.device-item.inactive-device {
+    opacity: 0.7;
+    background-color: #f8f9fa;
+    border-left: 4px solid #6c757d;
+}
+
+.device-item.inactive-device strong {
+    color: #6c757d;
+}
+
+.device-item.inactive-device .signal-strength {
+    background-color: #6c757d;
+}
+
+.device-item .signal-strength {
+    width: 60px;
+    text-align: right;
+}
+
+.device-frequency {
+    color: #6c757d;
+    font-size: 0.875rem;
+}
+
+#status {
+    font-size: 0.9rem;
+    padding: 5px 10px;
+    border-radius: 4px;
+}
+
+#status.connected {
+    color: #198754;
+}
+
+#status.disconnected {
+    color: #dc3545;
+}
+
+#status.simulated {
+    background-color: #ffc107;
+    color: #212529;
+}
+
+#status.real-gps {
+    background-color: #28a745;
+    color: white;
+}
+
+.signal-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.signal-strong {
+    background-color: #198754;
+}
+
+.signal-medium {
+    background-color: #ffc107;
+}
+
+.signal-weak {
+    background-color: #dc3545;
+}
+
+/* Map Styles */
+#map {
+    border-radius: 0.25rem;
+}
+
+.device-marker-icon {
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 0 3px rgba(0,0,0,0.5);
+    background-color: #007bff; /* Default blue */
+}
+
+.device-marker-icon.green {
+    background-color: #28a745; /* Green for whitelisted */
+}
+
+.device-marker-icon.red {
+    background-color: #dc3545; /* Red for geofence alerts */
+}
+
+.device-marker.signal-strong .device-marker-icon {
+    width: 20px;
+    height: 20px;
+}
+
+.device-marker.signal-medium .device-marker-icon {
+    width: 15px;
+    height: 15px;
+}
+
+.device-marker.signal-weak .device-marker-icon {
+    width: 10px;
+    height: 10px;
+}
+
+.user-marker-icon {
+    width: 20px;
+    height: 20px;
+    background-color: #007bff;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.5), 0 0 10px rgba(0, 0, 0, 0.35);
+    animation: pulse-blue 2s infinite;
+}
+
+.device-marker.geofence-alert .device-marker-icon {
+    animation: pulse-red 1.5s infinite;
+}
+
+.device-item.geofence-alert {
+    border-left: 4px solid #dc3545;
+}
+
+.station-popup {
+    min-width: 200px;
+}
+
+.station-popup h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #212529;
+    font-weight: 600;
+}
+
+.station-popup p {
+    margin-bottom: 5px;
+}
+
+@keyframes pulse-red {
+    0% {
+        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+    }
+}
+
+@keyframes pulse-blue {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+    }
+}
