@@ -43,7 +43,7 @@ rf_monitor = RFMonitor()
 
 # Initialize GPS module - update the port to match your GPS device
 # Common ports: 'COM3' on Windows, '/dev/ttyUSB0' or '/dev/ttyACM0' on Linux
-GPS_PORT = os.environ.get('GPS_PORT', 'COM5')  # Default to COM5, override with environment variable
+GPS_PORT = os.environ.get('GPS_PORT', 'COM6')  # Default to COM5, override with environment variable
 
 # Default monitoring location (used when GPS is not available)
 DEFAULT_MONITORING_LOCATION = {
@@ -99,14 +99,14 @@ whitelist = {}
 # File to store whitelist
 WHITELIST_FILE = "whitelist.json"
 
-# File to store all detected devices
+# Store for all detected devices
+devices_db = {}
 DEVICES_DB_FILE = "devices_db.json"
 
-# How long to keep a device in memory without detection (in seconds)
-DEVICE_EXPIRY_TIME = 300  # 5 minutes
+# Device expiry time (in seconds)
+DEVICE_EXPIRY_TIME = 3600  # 1 hour
 
-# Global variables
-devices_db = {}
+# Time of last cleanup
 last_cleanup_time = datetime.now()
 
 def load_whitelist():
@@ -114,35 +114,49 @@ def load_whitelist():
     try:
         if os.path.exists(WHITELIST_FILE):
             with open(WHITELIST_FILE, "r") as f:
-                loaded_data = json.load(f)
-                if isinstance(loaded_data, dict):
-                    whitelist = loaded_data
+                data = json.load(f)
+                if isinstance(data, dict):
+                    whitelist = data
                     logger.info(f"Loaded whitelist from {WHITELIST_FILE} with {len(whitelist)} devices")
                 else:
-                    logger.error(f"Invalid whitelist format in {WHITELIST_FILE}, starting with empty whitelist")
+                    logger.error(f"Invalid whitelist format in {WHITELIST_FILE}")
                     whitelist = {}
         else:
-            logger.info(f"Whitelist file {WHITELIST_FILE} not found, starting with empty whitelist")
+            # Create a new whitelist file if it doesn't exist
             whitelist = {}
+            save_whitelist()
+            logger.info(f"Created new whitelist file at {WHITELIST_FILE}")
+            
+        # Create a backup of the whitelist after loading
+        if whitelist and not os.path.exists(f"{WHITELIST_FILE}.bak"):
+            try:
+                with open(f"{WHITELIST_FILE}.bak", "w") as f:
+                    json.dump(whitelist, f, indent=2)
+                logger.info(f"Created backup of whitelist with {len(whitelist)} devices")
+            except Exception as e:
+                logger.error(f"Failed to create whitelist backup: {e}")
+                
     except Exception as e:
         logger.error(f"Error loading whitelist: {e}")
         whitelist = {}
-    
-    # Make a backup of the whitelist file if it exists
-    if os.path.exists(WHITELIST_FILE):
-        try:
-            backup_file = f"{WHITELIST_FILE}.bak"
-            shutil.copy2(WHITELIST_FILE, backup_file)
-            logger.info(f"Created backup of whitelist at {backup_file}")
-        except Exception as e:
-            logger.error(f"Failed to create whitelist backup: {e}")
+        
+        # Try to restore from backup if main file is corrupted
+        if os.path.exists(f"{WHITELIST_FILE}.bak"):
+            try:
+                with open(f"{WHITELIST_FILE}.bak", "r") as f:
+                    backup_data = json.load(f)
+                    if isinstance(backup_data, dict):
+                        whitelist = backup_data
+                        logger.info(f"Restored whitelist from backup with {len(whitelist)} devices")
+                        # Save the restored whitelist to the main file
+                        save_whitelist()
+            except Exception as e2:
+                logger.error(f"Failed to restore whitelist from backup: {e2}")
 
 def verify_whitelist():
-    """Verify whitelist integrity and fix any issues"""
     global whitelist
-    
     try:
-        # Check if whitelist is empty but file exists
+        # Check if whitelist is empty but should have data
         if not whitelist and os.path.exists(WHITELIST_FILE):
             logger.warning("Whitelist is empty but file exists, attempting to reload")
             load_whitelist()
@@ -276,12 +290,32 @@ def update_device_db(device):
         if 'frequency' in device and device['frequency'] != existing_device.get('frequency'):
             existing_device['frequency'] = device['frequency']
         
-        # Update whitelisted status
-        existing_device['whitelisted'] = device['whitelisted']
+        # Preserve whitelist status - prioritize existing status if already whitelisted
+        if existing_device.get('whitelisted', False):
+            existing_device['whitelisted'] = True
+        else:
+            existing_device['whitelisted'] = device.get('whitelisted', False)
         
+        # If this device is whitelisted, make sure we preserve whitelist data
+        if device_id in whitelist:
+            existing_device['whitelisted'] = True
+            # Preserve name and type from whitelist
+            if 'name' in whitelist[device_id]:
+                existing_device['name'] = whitelist[device_id]['name']
+            if 'type' in whitelist[device_id]:
+                existing_device['type'] = whitelist[device_id]['type']
     else:
         # Add new device to database
         devices_db[device_id] = device
+        
+        # Ensure whitelist status is correctly set for new devices
+        if device_id in whitelist:
+            devices_db[device_id]['whitelisted'] = True
+            # Update with whitelist information
+            for key, value in whitelist[device_id].items():
+                if key not in ['last_seen']:  # Don't overwrite timestamp
+                    devices_db[device_id][key] = value
+        
         logger.info(f"Added new device to database: {device_id}")
     
     # Save the database periodically
@@ -339,13 +373,27 @@ async def get_devices():
                         except Exception as e:
                             logger.error(f"Error processing GPS data: {e}")
                 
+                # First, create a mapping of device IDs to their whitelist status
+                # This ensures we don't lose whitelist information during processing
+                whitelisted_devices = {}
+                for device_id, device_info in whitelist.items():
+                    whitelisted_devices[device_id] = device_info
+                
                 # Use the devices directly from the spectrum_data
                 for device in spectrum_data['devices']:
                     # Check if device is in whitelist and update accordingly
                     device_id = device['id']
-                    device['whitelisted'] = device_id in whitelist
+                    
+                    # Check if this device is in our whitelist
                     if device_id in whitelist:
-                        device.update(whitelist[device_id])
+                        # Update device with whitelist information
+                        device['whitelisted'] = True
+                        # Preserve important whitelist data like name and type
+                        for key, value in whitelist[device_id].items():
+                            if key not in ['last_seen']:  # Don't overwrite timestamp
+                                device[key] = value
+                    else:
+                        device['whitelisted'] = False
                     
                     # Add current timestamp
                     device['last_seen'] = datetime.now().isoformat()
@@ -372,31 +420,13 @@ async def get_devices():
                     current_devices.append(device)
             
             # Update devices database with currently detected devices
+            # Ensure we preserve whitelist status when updating the database
             for device in current_devices:
+                device_id = device['id']
+                # Make sure whitelist status is preserved
+                if device_id in whitelist:
+                    device['whitelisted'] = True
                 update_device_db(device)
-            
-            # Get current GPS location for the monitoring station
-            monitoring_station_location = None
-            if gps_module.is_connected():
-                gps_location = gps_module.get_location()
-                if gps_location:
-                    # Ensure all numeric values are converted to float
-                    try:
-                        latitude = float(gps_location['latitude'])
-                        longitude = float(gps_location['longitude'])
-                        altitude = float(gps_location.get('altitude', 0))
-                        num_satellites = str(gps_location.get('num_satellites', 0))  # Keep as string for display
-                        hdop = float(gps_location.get('hdop', 0))
-                        
-                        monitoring_station_location = {
-                            "latitude": latitude,
-                            "longitude": longitude,
-                            "altitude": altitude,
-                            "num_satellites": num_satellites,
-                            "hdop": hdop
-                        }
-                    except Exception as e:
-                        logger.error(f"Error processing GPS data: {e}")
             
             # Get all devices from the database (includes current and previously seen devices)
             all_devices = list(devices_db.values())
@@ -431,11 +461,23 @@ async def whitelist_device(device_id: str, device: Device):
         # Save whitelist to file after adding a device
         save_whitelist()
         
+        # Create a backup of the whitelist for additional safety
+        try:
+            with open(f"{WHITELIST_FILE}.bak", "w") as f:
+                json.dump(whitelist, f, indent=2)
+            logger.info(f"Created backup of whitelist with {len(whitelist)} devices")
+        except Exception as e:
+            logger.error(f"Failed to create whitelist backup: {e}")
+        
         # Also update the device in the devices_db if it exists
         if device_id in devices_db:
             devices_db[device_id]["whitelisted"] = True
             devices_db[device_id]["name"] = device.name
             devices_db[device_id]["type"] = device.type
+            # Update other important fields from the whitelist
+            for key, value in whitelist[device_id].items():
+                if key not in devices_db[device_id] or key in ['name', 'type', 'whitelisted']:
+                    devices_db[device_id][key] = value
             save_devices_db()
         
         logger.info(f"Device {device_id} added to whitelist")
