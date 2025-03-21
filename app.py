@@ -543,17 +543,18 @@ async def get_monitoring_station():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    connections.append(websocket)
+    if websocket not in connections:
+        connections.append(websocket)
     logger.info(f"WebSocket client connected. Total connections: {len(connections)}")
-    
+
     try:
         while True:
-            # Wait for a message (this is just to keep the connection alive)
-            # We don't actually use the received message for anything
             await websocket.receive_text()
     except WebSocketDisconnect:
-        connections.remove(websocket)
+        if websocket in connections:
+            connections.remove(websocket)
         logger.info(f"WebSocket client disconnected. Remaining connections: {len(connections)}")
+
 
 async def broadcast_data():
     """Broadcast RF data to all connected WebSocket clients"""
