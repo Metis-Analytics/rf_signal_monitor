@@ -1,4 +1,5 @@
-import serial
+import serial.tools.list_ports
+from serial import Serial, SerialException
 import pynmea2
 import threading
 import time
@@ -82,7 +83,7 @@ class GPSModule:
         for baudrate in baudrates_to_try:
             try:
                 self.logger.info(f"Trying to connect to GPS device on {self.port} with baudrate {baudrate}")
-                self.serial_conn = serial.Serial(port=self.port, baudrate=baudrate, timeout=1)
+                self.serial_conn = Serial(port=self.port, baudrate=baudrate, timeout=1)
                 self.logger.info(f"Connected to GPS device on {self.port} with baudrate {baudrate}")
                 
                 # Try to read data for a few seconds to see if we get valid NMEA sentences
@@ -116,7 +117,7 @@ class GPSModule:
                 if not valid_data_found:
                     self.logger.info(f"No valid NMEA data found with baudrate {baudrate}")
                     self.serial_conn.close()
-            except serial.SerialException as e:
+            except SerialException as e:
                 self.logger.error(f"Error connecting to GPS device with baudrate {baudrate}: {e}")
                 continue
         

@@ -13,8 +13,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_real_gps")
 
 def main():
-    # Use COM5 for the G-Mouse GPS device
-    gps_port = "COM5"
+    # Use COM8 for the GPS device (based on available ports)
+    gps_port = "COM8"
     
     # Try different baudrates if needed
     baudrate = 4800

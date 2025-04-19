@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy import signal
 import time
 import json
+from json_utils import CustomJSONEncoder
 from datetime import datetime
 import subprocess
 import struct
@@ -13,15 +14,17 @@ import uuid
 from cellular_detector import CellularDetector
 
 class RFMonitor:
-    # Common cellular frequency bands to scan (in MHz)
+    # Common cellular frequency bands to scan (in MHz) - prioritized for cell phones
     CELLULAR_BANDS = [
-        850,    # GSM-850, LTE Band 5
-        900,    # GSM-900
-        1800,   # GSM-1800, LTE Band 3
-        1900,   # GSM-1900, LTE Band 2
-        2100,   # UMTS, LTE Band 1
-        700,    # LTE Bands 12, 13, 17
-        2600,   # LTE Band 7
+        850,    # GSM-850, LTE Band 5 - Common in North America
+        700,    # LTE Bands 12, 13, 17 - Primary coverage bands in US
+        1900,   # GSM-1900, LTE Band 2 - High usage for voice and data in US
+        2100,   # UMTS, LTE Band 1 - Common worldwide 3G/4G band
+        1800,   # GSM-1800, LTE Band 3 - High capacity band
+        900,    # GSM-900 - Common worldwide
+        2600,   # LTE Band 7 - High data capacity
+        600,    # LTE Band 71 - T-Mobile's extended range LTE
+        2300,   # LTE Band 30 - AT&T supplemental downlink
     ]
     
     def __init__(self, sample_rate=10e6, center_freq=915e6):
@@ -47,16 +50,25 @@ class RFMonitor:
             raise
     
     def next_frequency_band(self):
-        """Rotate through cellular frequency bands"""
-        self.current_band_index = (self.current_band_index + 1) % len(self.CELLULAR_BANDS)
+        """Rotate through cellular frequency bands with emphasis on common cell phone frequencies"""
+        # More sophisticated rotation that spends more time on high-value bands
+        # The first 4 bands in our list are the most common for cell phones
+        # This gives higher priority to the first 4 bands (70% chance)
+        if random.random() < 0.7 and self.current_band_index >= 4:
+            # Go back to one of the high-priority bands
+            self.current_band_index = random.randint(0, 3)
+        else:
+            # Normal rotation
+            self.current_band_index = (self.current_band_index + 1) % len(self.CELLULAR_BANDS)
+        
         self.center_freq = self.CELLULAR_BANDS[self.current_band_index] * 1e6
         return self.center_freq
     
     def capture_samples(self, num_samples=1048576):
-        """Capture RF samples using hackrf_transfer"""
+        """Capture RF samples focusing on cell phone frequencies"""
         try:
-            # Rotate to next frequency band
-            if random.random() < 0.3:  # 30% chance to change frequency on each capture
+            # Increase frequency band rotation rate to cover more cellular bands
+            if random.random() < 0.5:  # 50% chance to change frequency on each capture
                 self.next_frequency_band()
             
             # Create temporary files
@@ -119,6 +131,21 @@ class RFMonitor:
             return None
             
         try:
+            # Helper function to convert NumPy types to native Python types
+            def convert_numpy_types(obj):
+                if isinstance(obj, dict):
+                    return {k: convert_numpy_types(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy_types(item) for item in obj]
+                elif isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                else:
+                    return obj
+            
             # Apply window function
             window = np.hamming(len(samples))
             samples_windowed = samples * window
@@ -156,7 +183,8 @@ class RFMonitor:
             
             # Add cellular data if detected
             if cellular_data:
-                result['cellular_data'] = cellular_data
+                # Make sure all NumPy types are converted to native Python types
+                result['cellular_data'] = convert_numpy_types(cellular_data)
                 
             # Store results in scan_results dictionary
             band_key = f"{int(self.center_freq/1e6)}"
@@ -241,8 +269,26 @@ class RFMonitor:
     def save_data(self, data, filename='rf_data.json'):
         """Save RF data to JSON file"""
         try:
+            # Convert any NumPy types to native Python types first
+            def convert_numpy(obj):
+                if isinstance(obj, dict):
+                    return {k: convert_numpy(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy(item) for item in obj]
+                elif isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                else:
+                    return obj
+            
+            # Convert data before serializing
+            converted_data = convert_numpy(data)
+            
             with open(filename, 'w') as f:
-                json.dump(data, f)
+                json.dump(converted_data, f, cls=CustomJSONEncoder)
             print(f"Data saved to {filename}")
         except Exception as e:
             print(f"Error saving data: {str(e)}")

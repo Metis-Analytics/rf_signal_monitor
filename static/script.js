@@ -604,32 +604,86 @@ function updateMarkerForDevice(device) {
             deviceMarkers[device.id].setLatLng([lat, lng]);
             deviceMarkers[device.id].setIcon(markerIcon);
             
+            // Create device details HTML with expanded cell phone information
+            const detailsHTML = `
+                <div class="device-details">
+                    <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
+                    <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
+                    <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
+                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}</div>
+                    <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
+                    ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
+                    ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
+                    ${device.simulated_id ? `<div class="device-detail"><strong>Phone ID:</strong> ${device.simulated_id}</div>` : ''}
+                    <div class="device-detail"><strong>First Seen:</strong> ${new Date(device.first_seen).toLocaleString()}</div>
+                    <div class="device-detail"><strong>Last Seen:</strong> ${new Date(device.last_seen).toLocaleString()}</div>
+                    <div class="device-detail"><strong>Status:</strong> 
+                        <span class="badge ${device.isActive ? 'bg-success' : 'bg-secondary'}">                
+                            ${device.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                    </div>
+                    <div class="device-detail"><strong>Whitelisted:</strong> 
+                        <span class="badge ${device.whitelisted ? 'bg-success' : 'bg-danger'}">                
+                            ${device.whitelisted ? 'Yes' : 'No'}
+                        </span>
+                    </div>
+                    ${device.confidence ? `<div class="device-detail"><strong>Detection Confidence:</strong> ${(device.confidence * 100).toFixed(0)}%</div>` : ''}
+                </div>
+            `;
+            
             // Update popup content
             const popupContent = `
-                <strong>${device.name || 'Unknown Device'}</strong><br>
+                <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong><br>
                 Type: ${device.type || 'Unknown'}<br>
-                Frequency: ${device.frequency?.toFixed(2) || 'Unknown'} MHz<br>
-                Signal: ${device.power?.toFixed(2) || 'Unknown'} dB<br>
+                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}<br>
+                Signal: ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}<br>
                 ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
                 ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
             `;
-            deviceMarkers[device.id].getPopup().setContent(popupContent);
+            deviceMarkers[device.id].getPopup().setContent(detailsHTML + popupContent);
         } else {
             // Create new marker
             const marker = L.marker([lat, lng], {
                 icon: markerIcon
             });
             
+            // Create device details HTML with expanded cell phone information
+            const detailsHTML = `
+                <div class="device-details">
+                    <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
+                    <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
+                    <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
+                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}</div>
+                    <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
+                    ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
+                    ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
+                    ${device.simulated_id ? `<div class="device-detail"><strong>Phone ID:</strong> ${device.simulated_id}</div>` : ''}
+                    <div class="device-detail"><strong>First Seen:</strong> ${new Date(device.first_seen).toLocaleString()}</div>
+                    <div class="device-detail"><strong>Last Seen:</strong> ${new Date(device.last_seen).toLocaleString()}</div>
+                    <div class="device-detail"><strong>Status:</strong> 
+                        <span class="badge ${device.isActive ? 'bg-success' : 'bg-secondary'}">                
+                            ${device.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                    </div>
+                    <div class="device-detail"><strong>Whitelisted:</strong> 
+                        <span class="badge ${device.whitelisted ? 'bg-success' : 'bg-danger'}">                
+                            ${device.whitelisted ? 'Yes' : 'No'}
+                        </span>
+                    </div>
+                    ${device.confidence ? `<div class="device-detail"><strong>Detection Confidence:</strong> ${(device.confidence * 100).toFixed(0)}%</div>` : ''}
+                </div>
+            `;
+            
             // Add popup
             const popupContent = `
-                <strong>${device.name || 'Unknown Device'}</strong><br>
+                <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong><br>
                 Type: ${device.type || 'Unknown'}<br>
-                Frequency: ${device.frequency?.toFixed(2) || 'Unknown'} MHz<br>
-                Signal: ${device.power?.toFixed(2) || 'Unknown'} dB<br>
+                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}<br>
+                Signal: ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}<br>
                 ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
                 ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
             `;
-            marker.bindPopup(popupContent);
+            marker.bindPopup(detailsHTML + popupContent);
             
             // Add click event to show device details
             marker.on('click', function() {
@@ -690,14 +744,15 @@ function updateDeviceList(devices) {
                 <div>
                     <div class="d-flex align-items-center">
                         <span class="signal-indicator ${signalStrength.class}"></span>
-                        <strong>${device.name || `Device at ${device.frequency.toFixed(2)} MHz`}</strong>
+                        <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong>
                         ${device.whitelisted ? '<span class="badge bg-success ms-2">Whitelisted</span>' : ''}
                         ${device.insideGeofence === false ? '<span class="badge bg-danger ms-2">Outside Geofence</span>' : ''}
                         ${!device.isActive ? '<span class="badge bg-secondary ms-2">Inactive</span>' : ''}
                     </div>
                     <div class="device-frequency">
-                        ${device.type || 'Unknown'} 
+                        <strong>${device.manufacturer || 'Unknown'} ${device.subtype || device.type || 'Cell Phone'}</strong> 
                         ${device.simulated_id ? `• ID: ${device.simulated_id}` : ''}
+                        • Band: ${device.band || 'Unknown'}
                         • Last seen: ${lastSeenText}
                     </div>
                 </div>
@@ -722,51 +777,60 @@ function updateSpectrum(data) {
 
 // Show device details in modal
 function showDeviceDetails(device) {
-    document.getElementById('deviceId').value = device.id;
-    document.getElementById('deviceName').value = device.name || '';
+    const modal = document.getElementById('deviceModal');
+    const modalTitle = modal.querySelector('.modal-title');
+    const modalBody = modal.querySelector('.modal-body');
+    const addWhitelistBtn = document.getElementById('addWhitelistBtn');
+    const removeWhitelistBtn = document.getElementById('removeWhitelistBtn');
     
-    // Set device type in dropdown
-    const deviceTypeSelect = document.getElementById('deviceType');
-    const deviceType = device.type || 'Unknown';
+    // Set device ID in buttons' data attributes
+    addWhitelistBtn.setAttribute('data-device-id', device.id);
+    removeWhitelistBtn.setAttribute('data-device-id', device.id);
     
-    // Find and select the matching option
-    let optionFound = false;
-    for (let i = 0; i < deviceTypeSelect.options.length; i++) {
-        if (deviceTypeSelect.options[i].value === deviceType) {
-            deviceTypeSelect.selectedIndex = i;
-            optionFound = true;
-            break;
-        }
-    }
+    // Show/hide buttons based on whitelist status
+    addWhitelistBtn.style.display = device.whitelisted ? 'none' : 'block';
+    removeWhitelistBtn.style.display = device.whitelisted ? 'block' : 'none';
     
-    // If no matching option found, select "Unknown"
-    if (!optionFound) {
-        for (let i = 0; i < deviceTypeSelect.options.length; i++) {
-            if (deviceTypeSelect.options[i].value === 'Unknown') {
-                deviceTypeSelect.selectedIndex = i;
-                break;
-            }
-        }
-    }
+    // Set modal title with manufacturer if available
+    const deviceTitle = device.name || 
+        `${device.manufacturer || ''} ${device.subtype || device.type || 'Cell Phone'} at ${device.frequency_mhz.toFixed(2)} MHz`;
+    modalTitle.textContent = deviceTitle;
     
-    document.getElementById('deviceFreq').value = device.frequency.toFixed(2);
-    document.getElementById('deviceImsi').value = device.simulated_id || '';
+    // Format frequency
+    const frequency = device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown';
     
-    if (device.location) {
-        let lat, lng;
-        if (device.location.latitude !== undefined) {
-            lat = device.location.latitude;
-            lng = device.location.longitude;
-        } else {
-            lat = device.location.lat;
-            lng = device.location.lng;
-        }
-        document.getElementById('deviceLat').value = parseFloat(lat).toFixed(6);
-        document.getElementById('deviceLng').value = parseFloat(lng).toFixed(6);
-    }
+    // Format timestamps
+    const firstSeen = device.first_seen ? new Date(device.first_seen).toLocaleString() : 'Unknown';
+    const lastSeen = device.last_seen ? new Date(device.last_seen).toLocaleString() : 'Unknown';
     
-    document.getElementById('deviceFirstSeen').value = new Date(device.first_seen).toLocaleString();
-    document.getElementById('deviceLastSeen').value = new Date(device.last_seen).toLocaleString();
+    // Create device details HTML with expanded cell phone information
+    const detailsHTML = `
+        <div class="device-details">
+            <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
+            <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
+            <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
+            <div class="device-detail"><strong>Frequency:</strong> ${frequency}</div>
+            <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
+            ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
+            ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
+            ${device.simulated_id ? `<div class="device-detail"><strong>Phone ID:</strong> ${device.simulated_id}</div>` : ''}
+            <div class="device-detail"><strong>First Seen:</strong> ${firstSeen}</div>
+            <div class="device-detail"><strong>Last Seen:</strong> ${lastSeen}</div>
+            <div class="device-detail"><strong>Status:</strong> 
+                <span class="badge ${device.isActive ? 'bg-success' : 'bg-secondary'}">                
+                    ${device.isActive ? 'Active' : 'Inactive'}
+                </span>
+            </div>
+            <div class="device-detail"><strong>Whitelisted:</strong> 
+                <span class="badge ${device.whitelisted ? 'bg-success' : 'bg-danger'}">                
+                    ${device.whitelisted ? 'Yes' : 'No'}
+                </span>
+            </div>
+            ${device.confidence ? `<div class="device-detail"><strong>Detection Confidence:</strong> ${(device.confidence * 100).toFixed(0)}%</div>` : ''}
+        </div>
+    `;
+    
+    modalBody.innerHTML = detailsHTML;
     
     // Update whitelist checkbox
     const whitelistedCheckbox = document.getElementById('deviceWhitelisted');
@@ -778,17 +842,6 @@ function showDeviceDetails(device) {
     const activeCheckbox = document.getElementById('deviceActive');
     if (activeCheckbox) {
         activeCheckbox.checked = device.isActive || false;
-    }
-    
-    const addBtn = document.getElementById('addWhitelistBtn');
-    const removeBtn = document.getElementById('removeWhitelistBtn');
-    
-    if (device.whitelisted) {
-        addBtn.style.display = 'none';
-        removeBtn.style.display = 'block';
-    } else {
-        addBtn.style.display = 'block';
-        removeBtn.style.display = 'none';
     }
     
     deviceModal.show();

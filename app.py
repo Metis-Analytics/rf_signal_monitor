@@ -15,15 +15,11 @@ import random
 import uuid
 import time
 import traceback
+import numpy as np
 from rf_monitor import RFMonitor
-import asyncio
-import json
-import random
+from json_utils import CustomJSONEncoder
 import math
-import logging
-import time
-import os
-import shutil
+import gps_module
 from datetime import datetime
 from typing import Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -43,7 +39,7 @@ rf_monitor = RFMonitor()
 
 # Initialize GPS module - update the port to match your GPS device
 # Common ports: 'COM3' on Windows, '/dev/ttyUSB0' or '/dev/ttyACM0' on Linux
-GPS_PORT = os.environ.get('GPS_PORT', 'COM6')  # Default to COM5, override with environment variable
+GPS_PORT = os.environ.get('GPS_PORT', 'COM8')  # Default to COM5, override with environment variable
 
 # Default monitoring location (used when GPS is not available)
 DEFAULT_MONITORING_LOCATION = {
@@ -76,8 +72,30 @@ except Exception as e:
     gps_module = GPSModule(port=GPS_PORT, simulation_mode=True)
     gps_module.start()
 
-# Create FastAPI app
+# Custom JSON encoder function for FastAPI
+def numpy_encoder(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+# Create FastAPI app with custom JSON encoder
 app = FastAPI()
+
+# Configure FastAPI JSON response encoding
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+
+# Override the default JSONResponse class to use our custom encoder
+class CustomJSONResponse(JSONResponse):
+    def render(self, content):
+        return super().render(jsonable_encoder(content, custom_encoder={np.floating: float, np.integer: int}))
+
+# Replace the default JSONResponse with our custom one
+app.router.default_response_class = CustomJSONResponse
 
 # Serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -131,7 +149,7 @@ def load_whitelist():
         if whitelist and not os.path.exists(f"{WHITELIST_FILE}.bak"):
             try:
                 with open(f"{WHITELIST_FILE}.bak", "w") as f:
-                    json.dump(whitelist, f, indent=2)
+                    json.dump(whitelist, f, indent=2, cls=CustomJSONEncoder)
                 logger.info(f"Created backup of whitelist with {len(whitelist)} devices")
             except Exception as e:
                 logger.error(f"Failed to create whitelist backup: {e}")
@@ -185,7 +203,7 @@ def save_whitelist():
         # First write to a temporary file
         temp_file = f"{WHITELIST_FILE}.tmp"
         with open(temp_file, "w") as f:
-            json.dump(whitelist, f, indent=2)
+            json.dump(whitelist, f, indent=2, cls=CustomJSONEncoder)
         
         # Then rename the temporary file to the actual file
         # This helps prevent data corruption if the program crashes during writing
@@ -203,7 +221,7 @@ def save_whitelist():
         # Try a direct save as a fallback
         try:
             with open(WHITELIST_FILE, "w") as f:
-                json.dump(whitelist, f)
+                json.dump(whitelist, f, cls=CustomJSONEncoder)
             logger.info(f"Saved whitelist directly to {WHITELIST_FILE} with {len(whitelist)} devices")
         except Exception as e2:
             logger.error(f"Error in fallback whitelist save: {e2}")
@@ -225,7 +243,7 @@ def load_devices_db():
 def save_devices_db():
     try:
         with open(DEVICES_DB_FILE, "w") as f:
-            json.dump(devices_db, f)
+            json.dump(devices_db, f, cls=CustomJSONEncoder)
             logger.info(f"Saved devices database to {DEVICES_DB_FILE} with {len(devices_db)} devices")
     except Exception as e:
         logger.error(f"Error saving devices database: {e}")
@@ -347,6 +365,14 @@ async def get_devices():
         if samples is not None:
             spectrum_data = rf_monitor.analyze_spectrum(samples)
             
+            # Convert any NumPy types to Python native types to ensure JSON serialization works
+            if spectrum_data and isinstance(spectrum_data, dict):
+                for key, value in spectrum_data.items():
+                    if isinstance(value, np.ndarray):
+                        spectrum_data[key] = value.tolist()
+                    elif isinstance(value, (np.integer, np.floating)):
+                        spectrum_data[key] = numpy_encoder(value)
+            
             # Process spectrum data to identify potential devices
             current_devices = []
             if spectrum_data and 'devices' in spectrum_data:
@@ -464,7 +490,7 @@ async def whitelist_device(device_id: str, device: Device):
         # Create a backup of the whitelist for additional safety
         try:
             with open(f"{WHITELIST_FILE}.bak", "w") as f:
-                json.dump(whitelist, f, indent=2)
+                json.dump(whitelist, f, indent=2, cls=CustomJSONEncoder)
             logger.info(f"Created backup of whitelist with {len(whitelist)} devices")
         except Exception as e:
             logger.error(f"Failed to create whitelist backup: {e}")
@@ -644,7 +670,7 @@ async def broadcast_data():
                         # Broadcast to all connected clients
                         for connection in connections:
                             try:
-                                await connection.send_json(data)
+                                await connection.send_text(json.dumps(data, cls=CustomJSONEncoder))
                             except Exception as e:
                                 logger.error(f"Error sending data to WebSocket client: {e}")
                                 # Remove failed connection

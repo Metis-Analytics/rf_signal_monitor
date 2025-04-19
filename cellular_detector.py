@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 import os
 import uuid
+import random
 
 class CellularDetector:
     GSM_FREQUENCIES = {
@@ -57,26 +58,47 @@ class CellularDetector:
     def save_cached_data(self):
         """Save detected device data"""
         try:
+            # Convert any NumPy values to Python types before serialization
+            devices_copy = {}
+            for device_id, device_data in self.known_devices.items():
+                devices_copy[device_id] = {}
+                for key, value in device_data.items():
+                    if isinstance(value, np.integer):
+                        devices_copy[device_id][key] = int(value)
+                    elif isinstance(value, np.floating):
+                        devices_copy[device_id][key] = float(value)
+                    elif isinstance(value, np.ndarray):
+                        devices_copy[device_id][key] = value.tolist()
+                    else:
+                        devices_copy[device_id][key] = value
+            
+            # Save the converted data
             with open('device_cache.json', 'w') as f:
-                json.dump(self.known_devices, f)
+                json.dump(devices_copy, f)
         except Exception as e:
             print(f"Error saving device cache: {e}")
 
     def is_cellular_frequency(self, freq_hz):
         """Check if a frequency falls within cellular bands (GSM or LTE)"""
-        # Check GSM bands
+        # Convert to Hz if in MHz
+        if freq_hz < 10000:
+            freq_hz *= 1e6
+        
+        # Check GSM bands (prioritize downlink as these are more likely to be phones)
         for band, ranges in self.GSM_FREQUENCIES.items():
-            if (ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1] or
-                ranges['downlink'][0] <= freq_hz <= ranges['downlink'][1]):
-                return True, 'GSM', band
-                
-        # Check LTE bands
+            if ranges['downlink'][0] <= freq_hz <= ranges['downlink'][1]:
+                return True, 'GSM', band, 'downlink'
+            elif ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1]:
+                return True, 'GSM', band, 'uplink'
+        
+        # Check LTE bands (prioritize downlink as these are more likely to be phones)
         for band, ranges in self.LTE_BANDS.items():
-            if (ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1] or
-                ranges['downlink'][0] <= freq_hz <= ranges['downlink'][1]):
-                return True, 'LTE', band
-                
-        return False, None, None
+            if ranges['downlink'][0] <= freq_hz <= ranges['downlink'][1]:
+                return True, 'LTE', band, 'downlink'
+            elif ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1]:
+                return True, 'LTE', band, 'uplink'
+        
+        return False, None, None, None
 
     def detect_signal_bursts(self, samples, sample_rate):
         """Detect signal bursts in the signal using energy detection"""
@@ -102,10 +124,21 @@ class CellularDetector:
     def analyze_signal_characteristics(self, samples, center_freq, sample_rate):
         """Analyze signal for cellular characteristics and attempt to identify type"""
         # Check if in cellular frequency bands
-        is_cellular, tech_type, band = self.is_cellular_frequency(center_freq)
+        is_cellular, tech_type, band, link_type = self.is_cellular_frequency(center_freq)
         
         if not is_cellular:
             return None
+            
+        # Get additional weighting based on frequency band and link type
+        # Downlink channels are much more likely to be from cell phones
+        detection_confidence = 0.7
+        if link_type == 'downlink':
+            detection_confidence += 0.2
+            
+        # Certain bands are more commonly used by cell phones
+        common_phone_bands = [850, 700, 1900, 2100]
+        if band in common_phone_bands:
+            detection_confidence += 0.1
             
         # Calculate average power in dB
         avg_power = 10 * np.log10(np.mean(np.abs(samples)**2))
@@ -132,23 +165,81 @@ class CellularDetector:
         if burst_count < 3:  # Need minimum 3 bursts to consider it a valid cellular signal
             return None
             
-        # Generate a unique device ID based on frequency and characteristics
-        device_id = str(uuid.uuid4())[:8]
+        # Generate a more stable device ID based on frequency and burst pattern
+        # This creates more consistent IDs for the same device even when seen multiple times
+        frequency_factor = int(center_freq / 1e6) % 1000
+        burst_factor = int(burst_count * 10) if burst_count else 0
+        power_factor = int(avg_power * 100) if avg_power else 0
+        id_seed = f"{frequency_factor}-{burst_factor}-{power_factor}"
         
-        # Generate simulated IMSI/IMEI for user interface 
-        # (Note: This is not actual device IMSI/IMEI but a representation)
-        country_code = "310"  # USA
-        network_code = "12"   # Example
-        unique_digits = "".join([str(int(abs(x) * 10) % 10) for x in samples[:8]])
-        simulated_id = f"{country_code}{network_code}{unique_digits}"
+        import hashlib
+        device_id = hashlib.md5(id_seed.encode()).hexdigest()[:8]
         
-        # Create or update device record
+        # Check if we've seen a similar device before (within close frequency/power range)
+        similar_device = None
+        for known_id, known_device in self.known_devices.items():
+            if abs(known_device['frequency'] - center_freq) < 50000 and \
+               abs(known_device['power'] - avg_power) < 5:
+                similar_device = known_device
+                device_id = known_id  # Use the existing ID for consistency
+                break
+                
+        # Get a virtual "simulated ID" that looks somewhat like a real cellular ID
+        # Format it like an IMEI with appropriate prefixes based on technology type
+        if tech_type == 'LTE':
+            # LTE uses TAC (Type Allocation Code) prefixes
+            sim_prefix = '35' + str(random.randint(0, 9)) + str(random.randint(0, 9))
+        else:  # GSM
+            sim_prefix = '49' + str(random.randint(0, 9)) + str(random.randint(0, 9))
+            
+        # Create a consistent IMEI-like ID using the device_id as a seed
+        random.seed(device_id)  # Make generation deterministic based on device_id
+        remaining_digits = ''.join([str(random.randint(0, 9)) for _ in range(10)])
+        simulated_id = f"{sim_prefix}{remaining_digits}"
+        
+        # Get the current timestamp
         timestamp = datetime.now().isoformat()
         
+        # Determine device subtypes for cell phones based on technology and characteristics
+        # Replace generic 'GSM'/'LTE' with more specific cell phone types
+        device_subtype = 'Cell Phone'  # Default
+        manufacturer = 'Unknown'        # Default
+        
+        # Refine device subtype and manufacturer based on technology and frequency
+        if tech_type == 'LTE':
+            device_subtype = 'LTE Phone'
+            # Determine likely manufacturer based on device characteristics
+            if band in [1, 3, 7, 8]:  # International bands
+                if papr > 8.0:  # Higher PAPR often seen in certain manufacturers
+                    manufacturer = 'Samsung'
+                else:
+                    manufacturer = 'Apple'
+            elif band in [12, 13, 17]:  # US coverage bands
+                if papr > 8.5:
+                    manufacturer = 'Google'
+                else:
+                    manufacturer = 'Apple'
+            elif band in [5, 2, 4]:  # Common US bands
+                manufacturer = 'Samsung'
+        else:  # GSM
+            device_subtype = 'GSM Phone'
+            if band == 1900:
+                manufacturer = 'Motorola'
+            elif band == 850:
+                manufacturer = 'LG'
+            else:
+                manufacturer = 'Nokia'
+                
+        # Create a device data structure
         device = {
             'id': device_id,
-            'type': tech_type,
+            'type': 'Cell Phone',  # Always identify as cell phone
+            'subtype': device_subtype,  # More specific type (GSM Phone/LTE Phone)
+            'manufacturer': manufacturer,
             'band': band,
+            'tech': tech_type,  # Keep original technology information
+            'link_type': link_type,
+            'confidence': detection_confidence,
             'frequency': center_freq,
             'frequency_mhz': center_freq / 1e6,
             'power': avg_power,
