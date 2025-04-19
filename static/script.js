@@ -798,7 +798,7 @@ function updateDeviceList(devices) {
         .filter(device => !showWhitelistedOnly || device.whitelisted)
         .forEach(device => {
             const deviceElement = document.createElement('a');
-            deviceElement.className = `list-group-item list-group-item-action device-item d-flex justify-content-between align-items-center 
+            deviceElement.className = `list-group-item list-group-item-action d-flex justify-content-between align-items-center 
                 ${device.whitelisted ? 'whitelisted' : ''} 
                 ${device.insideGeofence === false ? 'geofence-alert' : ''}
                 ${!device.isActive ? 'inactive-device' : ''}`;
@@ -845,6 +845,17 @@ function updateDeviceList(devices) {
             
             deviceList.appendChild(deviceElement);
         });
+    
+    // Show message if no devices
+    if (devices.length === 0) {
+        const noDevices = document.createElement('div');
+        noDevices.className = 'text-center p-3 text-muted';
+        noDevices.style.backgroundColor = 'var(--secondary-color)';
+        noDevices.style.border = '1px solid var(--border-color)';
+        noDevices.style.fontStyle = 'italic';
+        noDevices.textContent = showWhitelistedOnly ? 'No whitelisted devices found' : 'No devices detected';
+        deviceList.appendChild(noDevices);
+    }
 }
 
 // Update the spectrum chart
@@ -861,148 +872,562 @@ function updateSpectrum(data) {
 
 // Show device details in modal
 function showDeviceDetails(device) {
-    const modal = document.getElementById('deviceModal');
-    const modalTitle = modal.querySelector('.modal-title');
-    const modalBody = modal.querySelector('.modal-body');
-    const addWhitelistBtn = document.getElementById('addWhitelistBtn');
-    const removeWhitelistBtn = document.getElementById('removeWhitelistBtn');
+    // Show device details in modal
+    const modal = new bootstrap.Modal(document.getElementById('deviceModal'));
     
-    // Set device ID in buttons' data attributes (for backward compatibility)
-    addWhitelistBtn.setAttribute('data-device-id', device.id);
-    removeWhitelistBtn.setAttribute('data-device-id', device.id);
+    // Set device ID in hidden field
+    document.getElementById('deviceId').value = device.id;
     
-    // Show/hide buttons based on whitelist status
-    addWhitelistBtn.style.display = device.whitelisted ? 'none' : 'block';
-    removeWhitelistBtn.style.display = device.whitelisted ? 'block' : 'none';
+    // Set device name
+    document.getElementById('deviceName').value = device.name || '';
     
-    // Set modal title with manufacturer if available
-    const deviceTitle = device.name || 
-        `${device.manufacturer || ''} ${device.subtype || device.type || 'Cell Phone'} at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`;
-    modalTitle.textContent = deviceTitle;
-    
-    // Format frequency
-    const frequency = device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown';
-    
-    // Format timestamps
-    const firstSeen = device.first_seen ? new Date(device.first_seen).toLocaleString() : 'Unknown';
-    const lastSeen = device.last_seen ? new Date(device.last_seen).toLocaleString() : 'Unknown';
-    
-    // IMPORTANT: Get the device ID input before updating the modal body
-    let deviceIdInput = document.getElementById('deviceId');
-    // If it doesn't exist, create it
-    if (!deviceIdInput) {
-        deviceIdInput = document.createElement('input');
-        deviceIdInput.type = 'hidden';
-        deviceIdInput.id = 'deviceId';
-        modalBody.appendChild(deviceIdInput);
-    }
-    // Set the device ID
-    deviceIdInput.value = device.id;
-    
-    // Create device details HTML with expanded cell phone information
-    const detailsHTML = `
-        <div class="device-details">
-            <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
-            <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
-            <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
-            <div class="device-detail"><strong>Frequency:</strong> ${frequency}</div>
-            <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
-            ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
-            ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
-            ${device.simulated_id ? `<div class="device-detail"><strong>Phone ID:</strong> ${device.simulated_id}</div>` : ''}
-            <div class="device-detail"><strong>First Seen:</strong> ${firstSeen}</div>
-            <div class="device-detail"><strong>Last Seen:</strong> ${lastSeen}</div>
-            <div class="device-detail"><strong>Status:</strong> 
-                <span class="badge ${device.isActive ? 'bg-success' : 'bg-secondary'}">                
-                    ${device.isActive ? 'Active' : 'Inactive'}
-                </span>
-            </div>
-            <div class="device-detail"><strong>Whitelisted:</strong> 
-                <span class="badge ${device.whitelisted ? 'bg-success' : 'bg-danger'}">                
-                    ${device.whitelisted ? 'Yes' : 'No'}
-                </span>
-            </div>
-            ${device.confidence ? `<div class="device-detail"><strong>Detection Confidence:</strong> ${(device.confidence * 100).toFixed(0)}%</div>` : ''}
-        </div>
+    // Set device type
+    const typeSelect = document.getElementById('deviceType');
+    if (typeSelect) {
+        // Find the option that matches the device type
+        const options = Array.from(typeSelect.options);
+        const matchingOption = options.find(option => option.value === device.type);
         
-        <!-- Form fields for whitelist -->
-        <div class="mb-3">
-            <label for="deviceName" class="form-label">Name</label>
-            <input type="text" class="form-control" id="deviceName" value="${device.name || `Device at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`}">
-        </div>
-        <div class="mb-3">
-            <label for="deviceType" class="form-label">Type</label>
-            <select class="form-control" id="deviceType">
-                <option value="Cellular" ${(device.type === 'Cellular') ? 'selected' : ''}>Cellular</option>
-                <option value="WiFi" ${(device.type === 'WiFi') ? 'selected' : ''}>WiFi</option>
-                <option value="Bluetooth" ${(device.type === 'Bluetooth') ? 'selected' : ''}>Bluetooth</option>
-                <option value="GSM" ${(device.type === 'GSM') ? 'selected' : ''}>GSM</option>
-                <option value="LTE" ${(device.type === 'LTE') ? 'selected' : ''}>LTE</option>
-                <option value="UMTS" ${(device.type === 'UMTS') ? 'selected' : ''}>UMTS</option>
-                <option value="Unknown" ${(!device.type || device.type === 'Unknown') ? 'selected' : ''}>Unknown</option>
-            </select>
-        </div>
-        <div class="mb-3">
-            <label for="deviceFreq" class="form-label">Frequency (MHz)</label>
-            <input type="number" class="form-control" id="deviceFreq" value="${device.frequency_mhz ? device.frequency_mhz : device.frequency ? device.frequency : 0}">
-        </div>
-        <div class="mb-3">
-            <label for="deviceImsi" class="form-label">IMSI/ID (if available)</label>
-            <input type="text" class="form-control" id="deviceImsi" readonly value="${device.simulated_id || ''}">
-        </div>
-        <div class="row">
-            <div class="col-md-6">
-                <div class="mb-3">
-                    <label for="deviceLat" class="form-label">Latitude</label>
-                    <input type="text" class="form-control" id="deviceLat" readonly value="${device.location ? device.location.latitude || '' : ''}">
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="mb-3">
-                    <label for="deviceLng" class="form-label">Longitude</label>
-                    <input type="text" class="form-control" id="deviceLng" readonly value="${device.location ? device.location.longitude || '' : ''}">
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-md-6">
-                <div class="mb-3">
-                    <label for="deviceFirstSeen" class="form-label">First Seen</label>
-                    <input type="text" class="form-control" id="deviceFirstSeen" readonly value="${firstSeen}">
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="mb-3">
-                    <label for="deviceLastSeen" class="form-label">Last Seen</label>
-                    <input type="text" class="form-control" id="deviceLastSeen" readonly value="${lastSeen}">
-                </div>
-            </div>
-        </div>
-        <div class="mb-3">
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="deviceWhitelisted" disabled ${device.whitelisted ? 'checked' : ''}>
-                <label class="form-check-label" for="deviceWhitelisted">
-                    Whitelisted
-                </label>
-            </div>
-        </div>
-        <div class="mb-3">
-            <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="deviceActive" disabled ${device.isActive ? 'checked' : ''}>
-                <label class="form-check-label" for="deviceActive">
-                    Active
-                </label>
-            </div>
-        </div>
-    `;
+        if (matchingOption) {
+            matchingOption.selected = true;
+        } else {
+            // If no matching option, select "Unknown"
+            const unknownOption = options.find(option => option.value === 'Unknown');
+            if (unknownOption) {
+                unknownOption.selected = true;
+            }
+        }
+    }
     
-    // Update the modal body
-    modalBody.innerHTML = detailsHTML;
+    // Set device frequency
+    document.getElementById('deviceFreq').value = device.frequency_mhz ? device.frequency_mhz.toFixed(2) : (device.frequency ? (device.frequency / 1e6).toFixed(2) : '');
     
-    // Re-append the device ID input to the modal body
-    modalBody.insertBefore(deviceIdInput, modalBody.firstChild);
+    // Set device IMSI/IMEI
+    const imeiField = document.getElementById('deviceImsi');
+    if (imeiField) {
+        // Check if this is an extracted IMEI or simulated
+        if (device.extracted_imei) {
+            imeiField.value = `${device.imei} `;
+            imeiField.classList.add('verified-imei');
+            // Add tooltip
+            imeiField.title = 'Verified IMEI extracted from device';
+        } else {
+            imeiField.value = device.imei || device.simulated_id || '';
+            imeiField.classList.remove('verified-imei');
+            imeiField.title = 'Estimated identifier';
+        }
+    }
     
-    deviceModal.show();
+    // Set device location
+    if (device.location) {
+        document.getElementById('deviceLat').value = device.location.latitude || device.location.lat || '';
+        document.getElementById('deviceLng').value = device.location.longitude || device.location.lng || '';
+    } else {
+        document.getElementById('deviceLat').value = '';
+        document.getElementById('deviceLng').value = '';
+    }
+    
+    // Set first seen and last seen times
+    if (device.first_seen) {
+        const firstSeen = new Date(device.first_seen);
+        document.getElementById('deviceFirstSeen').value = firstSeen.toLocaleString();
+    } else {
+        document.getElementById('deviceFirstSeen').value = '';
+    }
+    
+    if (device.last_seen) {
+        const lastSeen = new Date(device.last_seen);
+        document.getElementById('deviceLastSeen').value = lastSeen.toLocaleString();
+    } else {
+        document.getElementById('deviceLastSeen').value = '';
+    }
+    
+    // Set whitelisted status
+    document.getElementById('deviceWhitelisted').checked = device.whitelisted || false;
+    
+    // Set active status
+    document.getElementById('deviceActive').checked = device.isActive || false;
+    
+    // Show/hide whitelist buttons based on current status
+    if (device.whitelisted) {
+        document.getElementById('addWhitelistBtn').style.display = 'none';
+        document.getElementById('removeWhitelistBtn').style.display = 'inline-block';
+    } else {
+        document.getElementById('addWhitelistBtn').style.display = 'inline-block';
+        document.getElementById('removeWhitelistBtn').style.display = 'none';
+    }
+    
+    // Show the modal
+    modal.show();
+}
+
+function updateDeviceList(devices) {
+    // Update the device list
+    const deviceList = document.getElementById('deviceList');
+    if (!deviceList) return;
+    
+    // Clear the list
+    deviceList.innerHTML = '';
+    
+    // Filter devices based on whitelist setting
+    const filteredDevices = showWhitelistedOnly 
+        ? devices.filter(device => device.whitelisted) 
+        : devices;
+    
+    // Sort devices: active first, then by signal strength
+    filteredDevices.sort((a, b) => {
+        // Active devices first
+        if (a.isActive && !b.isActive) return -1;
+        if (!a.isActive && b.isActive) return 1;
+        
+        // Then by signal strength (higher power = stronger signal)
+        return (b.power || -100) - (a.power || -100);
+    });
+    
+    // Add devices to the list
+    filteredDevices.forEach(device => {
+        const deviceItem = document.createElement('a');
+        deviceItem.href = '#';
+        deviceItem.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+        deviceItem.dataset.id = device.id;
+        
+        // Add active/inactive class
+        if (device.isActive) {
+            deviceItem.classList.add('device-active');
+        } else {
+            deviceItem.classList.add('device-inactive');
+        }
+        
+        // Add whitelisted class if applicable
+        if (device.whitelisted) {
+            deviceItem.classList.add('device-whitelisted');
+        }
+        
+        // Format frequency
+        const freq = device.frequency_mhz ? device.frequency_mhz.toFixed(2) : (device.frequency ? (device.frequency / 1e6).toFixed(2) : 'Unknown');
+        
+        // Get signal strength class
+        const signalStrength = getSignalStrength(device.power || -100);
+        
+        // Format device type
+        const deviceType = formatDeviceType(device);
+        
+        // Format device ID (IMEI/IMSI)
+        const deviceId = formatDeviceId(device);
+        
+        // Create main content div
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'device-info';
+        
+        // Add device name or type as main heading
+        const nameHeading = document.createElement('h6');
+        nameHeading.className = 'mb-0';
+        nameHeading.textContent = device.name || deviceType;
+        contentDiv.appendChild(nameHeading);
+        
+        // Add frequency info
+        const freqInfo = document.createElement('small');
+        freqInfo.className = 'text-muted';
+        freqInfo.textContent = `${freq} MHz`;
+        contentDiv.appendChild(freqInfo);
+        
+        // Add IMEI/ID info with verification badge if applicable
+        const idInfo = document.createElement('small');
+        idInfo.className = 'device-id';
+        
+        // Check if this is an extracted IMEI
+        if (device.extracted_imei) {
+            idInfo.innerHTML = `<span class="verified-id">${deviceId}</span>`;
+            idInfo.title = 'Verified IMEI extracted from device';
+        } else {
+            idInfo.textContent = deviceId;
+            idInfo.title = 'Estimated identifier';
+        }
+        
+        contentDiv.appendChild(idInfo);
+        
+        // Add content div to item
+        deviceItem.appendChild(contentDiv);
+        
+        // Add signal strength indicator
+        const signalIndicator = document.createElement('span');
+        signalIndicator.className = `signal-indicator ${signalStrength.class}`;
+        signalIndicator.title = `Signal: ${signalStrength.text} (${device.power ? device.power.toFixed(1) : 'Unknown'} dB)`;
+        deviceItem.appendChild(signalIndicator);
+        
+        // Add click handler
+        deviceItem.addEventListener('click', function(e) {
+            e.preventDefault();
+            showDeviceDetails(device);
+        });
+        
+        // Add to list
+        deviceList.appendChild(deviceItem);
+    });
+    
+    // Show message if no devices
+    if (filteredDevices.length === 0) {
+        const noDevices = document.createElement('div');
+        noDevices.className = 'text-center p-3 text-muted';
+        noDevices.style.backgroundColor = 'var(--secondary-color)';
+        noDevices.style.border = '1px solid var(--border-color)';
+        noDevices.style.fontStyle = 'italic';
+        noDevices.textContent = showWhitelistedOnly ? 'No whitelisted devices found' : 'No devices detected';
+        deviceList.appendChild(noDevices);
+    }
+}
+
+// Update whitelist count in the header
+function updateWhitelistCount() {
+    console.log("Updating whitelist count");
+    
+    // Count whitelisted devices
+    const whitelistedDevices = currentDevices.filter(device => device.whitelisted);
+    console.log(`Found ${whitelistedDevices.length} whitelisted devices`);
+    
+    // Update the counter in the header
+    const whitelistStatus = document.getElementById('whitelistStatus');
+    if (whitelistStatus) {
+        const badgeClass = whitelistedDevices.length > 0 ? 'bg-success' : 'bg-secondary';
+        const plural = whitelistedDevices.length !== 1 ? 's' : '';
+        whitelistStatus.innerHTML = `WHITELIST: <span class="badge ${badgeClass}">${whitelistedDevices.length} device${plural}</span>`;
+        console.log("Updated whitelist status element");
+    } else {
+        console.error("Could not find whitelistStatus element");
+    }
+    
+    // Also update the filter status badge
+    const filterStatus = document.getElementById('whitelistFilterStatus');
+    if (filterStatus) {
+        if (showWhitelistedOnly) {
+            filterStatus.textContent = 'Showing Whitelisted Only';
+            filterStatus.className = 'badge bg-warning ms-2';
+        } else {
+            filterStatus.textContent = 'Showing All';
+            filterStatus.className = 'badge bg-success ms-2';
+        }
+    }
+}
+
+// Update device status counter in the header
+function updateDeviceStatusCount() {
+    const activeCount = Object.keys(deviceStatus.active).length;
+    const inactiveCount = Object.keys(deviceStatus.inactive).length;
+    
+    console.log(`Device status: ${activeCount} active, ${inactiveCount} inactive`);
+    
+    const deviceStatusElement = document.getElementById('deviceStatus');
+    if (deviceStatusElement) {
+        deviceStatusElement.innerHTML = `Devices: <span class="badge bg-primary">${activeCount} active</span> / <span class="badge bg-secondary">${inactiveCount} inactive</span>`;
+    }
+}
+
+// Toggle between all devices and whitelisted only
+function toggleWhitelistView() {
+    showWhitelistedOnly = !showWhitelistedOnly;
+    
+    // Update the button text and badge
+    const toggleBtn = document.getElementById('toggleWhitelistBtn');
+    const statusBadge = document.getElementById('whitelistFilterStatus');
+    
+    if (showWhitelistedOnly) {
+        toggleBtn.textContent = 'Show All Devices';
+        toggleBtn.classList.remove('btn-outline-success');
+        toggleBtn.classList.add('btn-success');
+        statusBadge.textContent = 'Showing Whitelisted Only';
+        statusBadge.classList.remove('bg-success');
+        statusBadge.classList.add('bg-warning');
+    } else {
+        toggleBtn.textContent = 'Show Whitelisted Only';
+        toggleBtn.classList.remove('btn-success');
+        toggleBtn.classList.add('btn-outline-success');
+        statusBadge.textContent = 'Showing All';
+        statusBadge.classList.remove('bg-warning');
+        statusBadge.classList.add('bg-success');
+    }
+    
+    // Update the device list
+    updateDeviceList(currentDevices);
+}
+
+// Helper function to determine signal strength
+function getSignalStrength(power) {
+    if (power > -30) {
+        return { class: 'signal-excellent', text: 'Excellent' };
+    } else if (power > -50) {
+        return { class: 'signal-good', text: 'Good' };
+    } else if (power > -70) {
+        return { class: 'signal-medium', text: 'Medium' };
+    } else if (power > -90) {
+        return { class: 'signal-weak', text: 'Weak' };
+    } else {
+        return { class: 'signal-poor', text: 'Poor' };
+    }
+}
+
+// Format device type for display
+function formatDeviceType(device) {
+    // Check if device has a subtype
+    if (device.subtype) {
+        return device.subtype;
+    }
+    
+    // Fall back to type
+    if (device.type) {
+        // Capitalize first letter
+        return device.type.charAt(0).toUpperCase() + device.type.slice(1);
+    }
+    
+    // Default
+    return 'Unknown Device';
+}
+
+// Format device ID based on type (IMEI for phones, Network ID for equipment)
+function formatDeviceId(device) {
+    // Check if we have an IMEI or simulated_id
+    if (device.imei) {
+        return device.imei;
+    }
+    
+    if (device.simulated_id) {
+        return device.simulated_id;
+    }
+    
+    // Fall back to device ID
+    return device.id ? device.id.substring(0, 8) : 'Unknown';
+}
+
+// Helper function to create a detailed popup for the monitoring station
+function createMonitoringStationPopup(stationData) {
+    if (!stationData) return "Monitoring Station";
+    
+    const isSimulated = stationData.simulated === true;
+    const sourceText = isSimulated ? "Simulated GPS" : "Real GPS";
+    const satellites = stationData.num_satellites || 0;
+    const hdop = parseFloat(stationData.hdop) || 0;
+    const altitude = parseFloat(stationData.altitude) || 0;
+    
+    let popupContent = `<div class="station-popup">
+        <h4>Monitoring Station</h4>
+        <p><strong>Source:</strong> ${sourceText}</p>
+        <p><strong>Coordinates:</strong> ${stationData.latitude.toFixed(6)}, ${stationData.longitude.toFixed(6)}</p>`;
+    
+    if (!isSimulated) {
+        popupContent += `
+        <p><strong>Satellites:</strong> ${satellites}</p>
+        <p><strong>HDOP:</strong> ${hdop.toFixed(1)}</p>
+        <p><strong>Altitude:</strong> ${altitude.toFixed(1)} m</p>`;
+    }
+    
+    popupContent += `</div>`;
+    
+    return popupContent;
+}
+
+function showDeviceDetails(device) {
+    // Show device details in modal
+    const modal = new bootstrap.Modal(document.getElementById('deviceModal'));
+    
+    // Set device ID in hidden field
+    document.getElementById('deviceId').value = device.id;
+    
+    // Set device name
+    document.getElementById('deviceName').value = device.name || '';
+    
+    // Set device type
+    const typeSelect = document.getElementById('deviceType');
+    if (typeSelect) {
+        // Find the option that matches the device type
+        const options = Array.from(typeSelect.options);
+        const matchingOption = options.find(option => option.value === device.type);
+        
+        if (matchingOption) {
+            matchingOption.selected = true;
+        } else {
+            // If no matching option, select "Unknown"
+            const unknownOption = options.find(option => option.value === 'Unknown');
+            if (unknownOption) {
+                unknownOption.selected = true;
+            }
+        }
+    }
+    
+    // Set device frequency
+    document.getElementById('deviceFreq').value = device.frequency_mhz ? device.frequency_mhz.toFixed(2) : (device.frequency ? (device.frequency / 1e6).toFixed(2) : '');
+    
+    // Set device IMSI/IMEI
+    const imeiField = document.getElementById('deviceImsi');
+    if (imeiField) {
+        // Check if this is an extracted IMEI or simulated
+        if (device.extracted_imei) {
+            imeiField.value = `${device.imei} `;
+            imeiField.classList.add('verified-imei');
+            // Add tooltip
+            imeiField.title = 'Verified IMEI extracted from device';
+        } else {
+            imeiField.value = device.imei || device.simulated_id || '';
+            imeiField.classList.remove('verified-imei');
+            imeiField.title = 'Estimated identifier';
+        }
+    }
+    
+    // Set device location
+    if (device.location) {
+        document.getElementById('deviceLat').value = device.location.latitude || device.location.lat || '';
+        document.getElementById('deviceLng').value = device.location.longitude || device.location.lng || '';
+    } else {
+        document.getElementById('deviceLat').value = '';
+        document.getElementById('deviceLng').value = '';
+    }
+    
+    // Set first seen and last seen times
+    if (device.first_seen) {
+        const firstSeen = new Date(device.first_seen);
+        document.getElementById('deviceFirstSeen').value = firstSeen.toLocaleString();
+    } else {
+        document.getElementById('deviceFirstSeen').value = '';
+    }
+    
+    if (device.last_seen) {
+        const lastSeen = new Date(device.last_seen);
+        document.getElementById('deviceLastSeen').value = lastSeen.toLocaleString();
+    } else {
+        document.getElementById('deviceLastSeen').value = '';
+    }
+    
+    // Set whitelisted status
+    document.getElementById('deviceWhitelisted').checked = device.whitelisted || false;
+    
+    // Set active status
+    document.getElementById('deviceActive').checked = device.isActive || false;
+    
+    // Show/hide whitelist buttons based on current status
+    if (device.whitelisted) {
+        document.getElementById('addWhitelistBtn').style.display = 'none';
+        document.getElementById('removeWhitelistBtn').style.display = 'inline-block';
+    } else {
+        document.getElementById('addWhitelistBtn').style.display = 'inline-block';
+        document.getElementById('removeWhitelistBtn').style.display = 'none';
+    }
+    
+    // Show the modal
+    modal.show();
+}
+
+function updateDeviceList(devices) {
+    // Update the device list
+    const deviceList = document.getElementById('deviceList');
+    if (!deviceList) return;
+    
+    // Clear the list
+    deviceList.innerHTML = '';
+    
+    // Filter devices based on whitelist setting
+    const filteredDevices = showWhitelistedOnly 
+        ? devices.filter(device => device.whitelisted) 
+        : devices;
+    
+    // Sort devices: active first, then by signal strength
+    filteredDevices.sort((a, b) => {
+        // Active devices first
+        if (a.isActive && !b.isActive) return -1;
+        if (!a.isActive && b.isActive) return 1;
+        
+        // Then by signal strength (higher power = stronger signal)
+        return (b.power || -100) - (a.power || -100);
+    });
+    
+    // Add devices to the list
+    filteredDevices.forEach(device => {
+        const deviceItem = document.createElement('a');
+        deviceItem.href = '#';
+        deviceItem.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+        deviceItem.dataset.id = device.id;
+        
+        // Add active/inactive class
+        if (device.isActive) {
+            deviceItem.classList.add('device-active');
+        } else {
+            deviceItem.classList.add('device-inactive');
+        }
+        
+        // Add whitelisted class if applicable
+        if (device.whitelisted) {
+            deviceItem.classList.add('device-whitelisted');
+        }
+        
+        // Format frequency
+        const freq = device.frequency_mhz ? device.frequency_mhz.toFixed(2) : (device.frequency ? (device.frequency / 1e6).toFixed(2) : 'Unknown');
+        
+        // Get signal strength class
+        const signalClass = getSignalStrength(device.power || -100);
+        
+        // Format device type
+        const deviceType = formatDeviceType(device);
+        
+        // Format device ID (IMEI/IMSI)
+        const deviceId = formatDeviceId(device);
+        
+        // Create main content div
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'device-info';
+        
+        // Add device name or type as main heading
+        const nameHeading = document.createElement('h6');
+        nameHeading.className = 'mb-0';
+        nameHeading.textContent = device.name || deviceType;
+        contentDiv.appendChild(nameHeading);
+        
+        // Add frequency info
+        const freqInfo = document.createElement('small');
+        freqInfo.className = 'text-muted';
+        freqInfo.textContent = `${freq} MHz`;
+        contentDiv.appendChild(freqInfo);
+        
+        // Add IMEI/ID info with verification badge if applicable
+        const idInfo = document.createElement('small');
+        idInfo.className = 'device-id';
+        
+        // Check if this is an extracted IMEI
+        if (device.extracted_imei) {
+            idInfo.innerHTML = `<span class="verified-id">${deviceId} </span>`;
+            idInfo.title = 'Verified IMEI extracted from device';
+        } else {
+            idInfo.textContent = deviceId;
+            idInfo.title = 'Estimated identifier';
+        }
+        
+        contentDiv.appendChild(idInfo);
+        
+        // Add content div to item
+        deviceItem.appendChild(contentDiv);
+        
+        // Add signal strength indicator
+        const signalIndicator = document.createElement('span');
+        signalIndicator.className = `signal-indicator ${signalClass}`;
+        signalIndicator.title = `Signal: ${signalClass.text} (${device.power ? device.power.toFixed(1) : 'Unknown'} dB)`;
+        deviceItem.appendChild(signalIndicator);
+        
+        // Add click handler
+        deviceItem.addEventListener('click', function(e) {
+            e.preventDefault();
+            showDeviceDetails(device);
+        });
+        
+        // Add to list
+        deviceList.appendChild(deviceItem);
+    });
+    
+    // Show message if no devices
+    if (filteredDevices.length === 0) {
+        const noDevices = document.createElement('div');
+        noDevices.className = 'text-center p-3 text-muted';
+        noDevices.style.backgroundColor = 'var(--secondary-color)';
+        noDevices.style.border = '1px solid var(--border-color)';
+        noDevices.style.fontStyle = 'italic';
+        noDevices.textContent = showWhitelistedOnly ? 'No whitelisted devices found' : 'No devices detected';
+        deviceList.appendChild(noDevices);
+    }
 }
 
 // Add device to whitelist
@@ -1185,115 +1610,4 @@ async function removeFromWhitelist() {
         console.error('Error removing from whitelist:', error);
         alert('Failed to remove device from whitelist: ' + error.message);
     }
-}
-
-// Update whitelist count in the header
-function updateWhitelistCount() {
-    console.log("Updating whitelist count");
-    
-    // Count whitelisted devices
-    const whitelistedDevices = currentDevices.filter(device => device.whitelisted);
-    console.log(`Found ${whitelistedDevices.length} whitelisted devices`);
-    
-    // Update the counter in the header
-    const whitelistStatus = document.getElementById('whitelistStatus');
-    if (whitelistStatus) {
-        const badgeClass = whitelistedDevices.length > 0 ? 'bg-success' : 'bg-secondary';
-        const plural = whitelistedDevices.length !== 1 ? 's' : '';
-        whitelistStatus.innerHTML = `WHITELIST: <span class="badge ${badgeClass}">${whitelistedDevices.length} device${plural}</span>`;
-        console.log("Updated whitelist status element");
-    } else {
-        console.error("Could not find whitelistStatus element");
-    }
-    
-    // Also update the filter status badge
-    const filterStatus = document.getElementById('whitelistFilterStatus');
-    if (filterStatus) {
-        if (showWhitelistedOnly) {
-            filterStatus.textContent = 'Showing Whitelisted Only';
-            filterStatus.className = 'badge bg-warning ms-2';
-        } else {
-            filterStatus.textContent = 'Showing All';
-            filterStatus.className = 'badge bg-success ms-2';
-        }
-    }
-}
-
-// Update device status counter in the header
-function updateDeviceStatusCount() {
-    const activeCount = Object.keys(deviceStatus.active).length;
-    const inactiveCount = Object.keys(deviceStatus.inactive).length;
-    
-    console.log(`Device status: ${activeCount} active, ${inactiveCount} inactive`);
-    
-    const deviceStatusElement = document.getElementById('deviceStatus');
-    if (deviceStatusElement) {
-        deviceStatusElement.innerHTML = `Devices: <span class="badge bg-primary">${activeCount} active</span> / <span class="badge bg-secondary">${inactiveCount} inactive</span>`;
-    }
-}
-
-// Toggle between all devices and whitelisted only
-function toggleWhitelistView() {
-    showWhitelistedOnly = !showWhitelistedOnly;
-    
-    // Update the button text and badge
-    const toggleBtn = document.getElementById('toggleWhitelistBtn');
-    const statusBadge = document.getElementById('whitelistFilterStatus');
-    
-    if (showWhitelistedOnly) {
-        toggleBtn.textContent = 'Show All Devices';
-        toggleBtn.classList.remove('btn-outline-success');
-        toggleBtn.classList.add('btn-success');
-        statusBadge.textContent = 'Showing Whitelisted Only';
-        statusBadge.classList.remove('bg-success');
-        statusBadge.classList.add('bg-warning');
-    } else {
-        toggleBtn.textContent = 'Show Whitelisted Only';
-        toggleBtn.classList.remove('btn-success');
-        toggleBtn.classList.add('btn-outline-success');
-        statusBadge.textContent = 'Showing All';
-        statusBadge.classList.remove('bg-warning');
-        statusBadge.classList.add('bg-success');
-    }
-    
-    // Update the device list
-    updateDeviceList(currentDevices);
-}
-
-// Helper function to determine signal strength
-function getSignalStrength(power) {
-    if (power > -30) {
-        return { class: 'signal-strong', text: 'Strong' };
-    } else if (power > -60) {
-        return { class: 'signal-medium', text: 'Medium' };
-    } else {
-        return { class: 'signal-weak', text: 'Weak' };
-    }
-}
-
-// Helper function to create a detailed popup for the monitoring station
-function createMonitoringStationPopup(stationData) {
-    if (!stationData) return "Monitoring Station";
-    
-    const isSimulated = stationData.simulated === true;
-    const sourceText = isSimulated ? "Simulated GPS" : "Real GPS";
-    const satellites = stationData.num_satellites || 0;
-    const hdop = parseFloat(stationData.hdop) || 0;
-    const altitude = parseFloat(stationData.altitude) || 0;
-    
-    let popupContent = `<div class="station-popup">
-        <h4>Monitoring Station</h4>
-        <p><strong>Source:</strong> ${sourceText}</p>
-        <p><strong>Coordinates:</strong> ${stationData.latitude.toFixed(6)}, ${stationData.longitude.toFixed(6)}</p>`;
-    
-    if (!isSimulated) {
-        popupContent += `
-        <p><strong>Satellites:</strong> ${satellites}</p>
-        <p><strong>HDOP:</strong> ${hdop.toFixed(1)}</p>
-        <p><strong>Altitude:</strong> ${altitude.toFixed(1)} m</p>`;
-    }
-    
-    popupContent += `</div>`;
-    
-    return popupContent;
 }

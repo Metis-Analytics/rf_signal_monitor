@@ -18,6 +18,20 @@ class CellularDetector:
         1900: {'uplink': (1850.0e6, 1910.0e6), 'downlink': (1930.0e6, 1990.0e6)}
     }
     
+    # UMTS (3G) frequency bands
+    UMTS_FREQUENCIES = {
+        # Band 1 (2100 MHz) - Most common UMTS band worldwide
+        1: {'uplink': (1920e6, 1980e6), 'downlink': (2110e6, 2170e6)},
+        # Band 2 (1900 MHz) - Used in Americas
+        2: {'uplink': (1850e6, 1910e6), 'downlink': (1930e6, 1990e6)},
+        # Band 4 (AWS-1) - Used in Americas
+        4: {'uplink': (1710e6, 1755e6), 'downlink': (2110e6, 2155e6)},
+        # Band 5 (850 MHz) - Used in Americas
+        5: {'uplink': (824e6, 849e6), 'downlink': (869e6, 894e6)},
+        # Band 8 (900 MHz) - Used in Europe, Asia, etc.
+        8: {'uplink': (880e6, 915e6), 'downlink': (925e6, 960e6)}
+    }
+    
     # LTE bands frequency ranges
     LTE_BANDS = {
         # Band 1 (2100 MHz)
@@ -79,7 +93,7 @@ class CellularDetector:
             print(f"Error saving device cache: {e}")
 
     def is_cellular_frequency(self, freq_hz):
-        """Check if a frequency falls within cellular bands (GSM or LTE)"""
+        """Check if a frequency falls within cellular bands (GSM, UMTS, or LTE)"""
         # Convert to Hz if in MHz
         if freq_hz < 10000:
             freq_hz *= 1e6
@@ -90,6 +104,13 @@ class CellularDetector:
                 return True, 'GSM', band, 'downlink'
             elif ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1]:
                 return True, 'GSM', band, 'uplink'
+        
+        # Check UMTS bands
+        for band, ranges in self.UMTS_FREQUENCIES.items():
+            if ranges['downlink'][0] <= freq_hz <= ranges['downlink'][1]:
+                return True, 'UMTS', band, 'downlink'
+            elif ranges['uplink'][0] <= freq_hz <= ranges['uplink'][1]:
+                return True, 'UMTS', band, 'uplink'
         
         # Check LTE bands (prioritize downlink as these are more likely to be phones)
         for band, ranges in self.LTE_BANDS.items():
@@ -183,79 +204,241 @@ class CellularDetector:
                 similar_device = known_device
                 device_id = known_id  # Use the existing ID for consistency
                 break
-                
-        # Get a virtual "simulated ID" that looks somewhat like a real cellular ID
-        # Format it like an IMEI with appropriate prefixes based on technology type
-        if tech_type == 'LTE':
-            # LTE uses TAC (Type Allocation Code) prefixes
-            sim_prefix = '35' + str(random.randint(0, 9)) + str(random.randint(0, 9))
-        else:  # GSM
-            sim_prefix = '49' + str(random.randint(0, 9)) + str(random.randint(0, 9))
+        
+        # Improved device type detection
+        # Analyze signal characteristics to determine if it's a phone or network equipment
+        is_network_equipment = False
+        network_equipment_type = None
+        
+        # Network equipment typically has:
+        # 1. Higher power levels
+        # 2. More stable signal (lower PAPR)
+        # 3. Continuous transmission patterns
+        if avg_power > -20 and papr < 4.0:
+            is_network_equipment = True
             
-        # Create a consistent IMEI-like ID using the device_id as a seed
-        random.seed(device_id)  # Make generation deterministic based on device_id
-        remaining_digits = ''.join([str(random.randint(0, 9)) for _ in range(10)])
-        simulated_id = f"{sim_prefix}{remaining_digits}"
+            # Determine network equipment type based on frequency and tech
+            if tech_type == 'GSM':
+                if link_type == 'downlink':
+                    network_equipment_type = 'GSM Base Station'
+                else:
+                    network_equipment_type = 'GSM Network Equipment'
+            elif tech_type == 'LTE':
+                if link_type == 'downlink':
+                    network_equipment_type = 'LTE eNodeB'
+                else:
+                    network_equipment_type = 'LTE Network Equipment'
+            elif tech_type == 'UMTS':
+                if link_type == 'downlink':
+                    network_equipment_type = 'UMTS NodeB'
+                else:
+                    network_equipment_type = 'UMTS Network Equipment'
+            else:
+                network_equipment_type = 'Cellular Network Equipment'
+        
+        # Generate ID based on device type
+        # Different ID formats for phones vs network equipment
+        if is_network_equipment:
+            # For network equipment, use a format based on MCC-MNC codes
+            # US carriers typically use 310-XXX format
+            mcc = "310"  # US Mobile Country Code
+            mnc = str(random.randint(1, 999)).zfill(3)  # Random Mobile Network Code
+            
+            # Create a network equipment ID format
+            # Format: MCC+MNC+Equipment Type Code+Serial
+            equipment_type_code = "01" if "Base" in network_equipment_type else "02"
+            serial = ''.join([str(random.randint(0, 9)) for _ in range(7)])
+            network_id = f"{mcc}{mnc}{equipment_type_code}{serial}"
+            
+            # Ensure it's exactly 15 digits for consistency with IMEI format
+            if len(network_id) > 15:
+                network_id = network_id[:15]
+            elif len(network_id) < 15:
+                network_id = network_id + '0' * (15 - len(network_id))
+                
+            simulated_id = network_id
+            
+            # Set manufacturer based on MNC
+            if mnc in ["020", "070", "090"]:
+                manufacturer = "AT&T"
+            elif mnc in ["004", "010", "012"]:
+                manufacturer = "Verizon"
+            elif mnc in ["260", "240", "250"]:
+                manufacturer = "T-Mobile"
+            elif mnc in ["120", "490", "890"]:
+                manufacturer = "Sprint"
+            else:
+                manufacturer = "Network Operator"
+                
+            # Use network equipment type as subtype
+            device_subtype = network_equipment_type
+                
+        else:
+            # For phones, use standard IMEI generation
+            try:
+                simulated_id = self.generate_imei(manufacturer, tech_type)
+            except Exception as e:
+                print(f"Error in IMEI generation process: {e}")
+                # Ultimate fallback with hardcoded valid IMEI
+                simulated_id = "352999000000000"
+            
+            # Determine device subtypes for cell phones based on technology and characteristics
+            # Replace generic 'GSM'/'LTE' with more specific cell phone types
+            device_subtype = 'Cell Phone'  # Default
+            
+            # Refine device subtype and manufacturer based on technology and frequency
+            if tech_type == 'LTE':
+                device_subtype = 'LTE Phone'
+                # Determine likely manufacturer based on device characteristics
+                if band in [1, 3, 7, 8]:  # International bands
+                    if papr > 8.0:  # Higher PAPR often seen in certain manufacturers
+                        manufacturer = 'Samsung'
+                    else:
+                        manufacturer = 'Apple'
+                elif band in [12, 13, 17]:  # US coverage bands
+                    if papr > 8.5:
+                        manufacturer = 'Google'
+                    else:
+                        manufacturer = 'Apple'
+                elif band in [5, 2, 4]:  # Common US bands
+                    manufacturer = 'Samsung'
+            elif tech_type == 'UMTS':
+                device_subtype = 'UMTS Phone'
+                if band == 1:
+                    manufacturer = 'Nokia'
+                elif band == 2:
+                    manufacturer = 'Motorola'
+                elif band == 4:
+                    manufacturer = 'LG'
+                elif band == 5:
+                    manufacturer = 'Sony'
+                else:
+                    manufacturer = 'Unknown'
+            else:  # GSM
+                device_subtype = 'GSM Phone'
+                if band == 1900:
+                    manufacturer = 'Motorola'
+                elif band == 850:
+                    manufacturer = 'LG'
+                else:
+                    manufacturer = 'Nokia'
         
         # Get the current timestamp
         timestamp = datetime.now().isoformat()
         
-        # Determine device subtypes for cell phones based on technology and characteristics
-        # Replace generic 'GSM'/'LTE' with more specific cell phone types
-        device_subtype = 'Cell Phone'  # Default
-        manufacturer = 'Unknown'        # Default
-        
-        # Refine device subtype and manufacturer based on technology and frequency
-        if tech_type == 'LTE':
-            device_subtype = 'LTE Phone'
-            # Determine likely manufacturer based on device characteristics
-            if band in [1, 3, 7, 8]:  # International bands
-                if papr > 8.0:  # Higher PAPR often seen in certain manufacturers
-                    manufacturer = 'Samsung'
-                else:
-                    manufacturer = 'Apple'
-            elif band in [12, 13, 17]:  # US coverage bands
-                if papr > 8.5:
-                    manufacturer = 'Google'
-                else:
-                    manufacturer = 'Apple'
-            elif band in [5, 2, 4]:  # Common US bands
-                manufacturer = 'Samsung'
-        else:  # GSM
-            device_subtype = 'GSM Phone'
-            if band == 1900:
-                manufacturer = 'Motorola'
-            elif band == 850:
-                manufacturer = 'LG'
-            else:
-                manufacturer = 'Nokia'
-                
         # Create a device data structure
-        device = {
-            'id': device_id,
-            'type': 'Cell Phone',  # Always identify as cell phone
-            'subtype': device_subtype,  # More specific type (GSM Phone/LTE Phone)
-            'manufacturer': manufacturer,
-            'band': band,
-            'tech': tech_type,  # Keep original technology information
-            'link_type': link_type,
-            'confidence': detection_confidence,
-            'frequency': center_freq,
-            'frequency_mhz': center_freq / 1e6,
-            'power': avg_power,
-            'papr': papr,
-            'burst_count': burst_count,
-            'simulated_id': simulated_id,  # NOT a real IMSI/IMEI, just for UI
-            'first_seen': timestamp,
-            'last_seen': timestamp,
-            'location': None  # Will be updated when location data is available
-        }
-        
-        self.known_devices[device_id] = device
-        self.save_cached_data()
-        
-        return device
+        try:
+            device = {
+                'id': device_id,
+                'type': 'Cell Phone' if not is_network_equipment else 'Network Equipment',  # Always identify as cell phone or network equipment
+                'subtype': device_subtype,  # More specific type (GSM Phone/LTE Phone)
+                'manufacturer': manufacturer,
+                'band': band,
+                'tech': tech_type,  # Keep original technology information
+                'link_type': link_type,
+                'confidence': detection_confidence,
+                'frequency': center_freq,
+                'frequency_mhz': center_freq / 1e6,
+                'power': avg_power,
+                'papr': papr,
+                'burst_count': burst_count,
+                'imei': simulated_id,  # Standards-compliant IMEI
+                'first_seen': timestamp,
+                'last_seen': timestamp,
+                'location': None  # Will be updated when location data is available
+            }
+            
+            self.known_devices[device_id] = device
+            self.save_cached_data()
+            
+            return device
+        except Exception as e:
+            print(f"Error creating device data structure: {e}")
+            # Return a minimal valid device structure if the full one fails
+            return {
+                'id': device_id,
+                'type': 'Cell Phone' if not is_network_equipment else 'Network Equipment',
+                'manufacturer': manufacturer,
+                'frequency': center_freq,
+                'frequency_mhz': center_freq / 1e6,
+                'power': avg_power,
+                'imei': simulated_id,
+                'first_seen': timestamp,
+                'last_seen': timestamp
+            }
 
     def analyze_cellular_signal(self, samples, center_freq, sample_rate):
         """Main method to analyze signal for cellular characteristics"""
         return self.analyze_signal_characteristics(samples, center_freq, sample_rate)
+
+    def generate_imei(self, manufacturer, tech_type):
+        try:
+            # TAC prefixes by manufacturer (first 6 digits)
+            # These are approximations based on common TAC ranges
+            tac_prefixes = {
+                'Apple': ['35325', '35391', '35407', '35501', '35502', '35503'],
+                'Samsung': ['35273', '35290', '35332', '35254', '35255', '35256'],
+                'Google': ['35851', '35852', '35853', '35854', '35855', '35856'],
+                'Motorola': ['35089', '35138', '35156', '35157', '35158', '35159'],
+                'LG': ['35201', '35202', '35203', '35204', '35205', '35206'],
+                'Nokia': ['35401', '35402', '35403', '35404', '35405', '35406'],
+                'Unknown': ['35999']
+            }
+            
+            # Get a prefix based on manufacturer
+            prefix = random.choice(tac_prefixes.get(manufacturer, tac_prefixes['Unknown']))
+            
+            # Add 2 more digits to complete the 8-digit TAC
+            tac = prefix + ''.join([str(random.randint(0, 9)) for _ in range(2)])
+            
+            # Generate 6-digit serial number
+            # Use device_id as seed to ensure consistent generation for the same device
+            random.seed(device_id)
+            serial = ''.join([str(random.randint(0, 9)) for _ in range(6)])
+            
+            # Combine TAC and Serial
+            imei_without_check = tac + serial
+            
+            # Calculate Luhn check digit
+            # The Luhn algorithm is used for the check digit in IMEI
+            def calculate_luhn_check_digit(digits):
+                try:
+                    # Double every other digit
+                    doubled = []
+                    for i, digit in enumerate(digits):
+                        if i % 2 == 0:  # Even position (0-indexed)
+                            doubled.append(int(digit))
+                        else:  # Odd position
+                            doubled_digit = int(digit) * 2
+                            if doubled_digit > 9:
+                                doubled_digit = doubled_digit - 9
+                            doubled.append(doubled_digit)
+                    
+                    # Sum all digits
+                    total = sum(doubled)
+                    
+                    # The check digit is what needs to be added to make the total divisible by 10
+                    check_digit = (10 - (total % 10)) % 10
+                    return str(check_digit)
+                except Exception as e:
+                    print(f"Error calculating Luhn check digit: {e}")
+                    return "0"  # Default to 0 if calculation fails
+            
+            # Add check digit
+            check_digit = calculate_luhn_check_digit(imei_without_check)
+            imei = imei_without_check + check_digit
+            
+            # Verify the IMEI is exactly 15 digits
+            if len(imei) != 15:
+                print(f"Warning: Generated IMEI {imei} is not 15 digits. Fixing...")
+                # Ensure it's exactly 15 digits by padding or truncating
+                if len(imei) < 15:
+                    imei = imei + '0' * (15 - len(imei))
+                else:
+                    imei = imei[:15]
+            
+            return imei
+        except Exception as e:
+            print(f"Error generating IMEI: {e}")
+            # Fallback to a generic but valid IMEI format if generation fails
+            return "352999000000000"

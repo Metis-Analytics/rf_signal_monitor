@@ -12,25 +12,28 @@ import os
 import random
 import uuid
 from cellular_detector import CellularDetector
+from cellular_decoder import CellularDecoder
 
 class RFMonitor:
     # Common cellular frequency bands to scan (in MHz) - prioritized for cell phones
     CELLULAR_BANDS = [
-        850,    # GSM-850, LTE Band 5 - Common in North America
+        850,    # GSM-850, LTE Band 5, UMTS Band 5 - Common in North America
         700,    # LTE Bands 12, 13, 17 - Primary coverage bands in US
-        1900,   # GSM-1900, LTE Band 2 - High usage for voice and data in US
-        2100,   # UMTS, LTE Band 1 - Common worldwide 3G/4G band
+        1900,   # GSM-1900, LTE Band 2, UMTS Band 2 - High usage for voice and data in US
+        2100,   # UMTS Band 1, LTE Band 1 - Common worldwide 3G/4G band
         1800,   # GSM-1800, LTE Band 3 - High capacity band
-        900,    # GSM-900 - Common worldwide
+        900,    # GSM-900, UMTS Band 8 - Common worldwide
         2600,   # LTE Band 7 - High data capacity
         600,    # LTE Band 71 - T-Mobile's extended range LTE
         2300,   # LTE Band 30 - AT&T supplemental downlink
+        1700,   # AWS, UMTS Band 4 - Used in Americas
     ]
     
     def __init__(self, sample_rate=10e6, center_freq=915e6):
         self.sample_rate = sample_rate
         self.center_freq = center_freq
         self.cellular_detector = CellularDetector()
+        self.cellular_decoder = CellularDecoder(sample_rate=20e6, gain=40)
         self.current_band_index = 0
         self.scan_results = {}
         self.device_ids = set()
@@ -169,6 +172,33 @@ class RFMonitor:
                 samples, self.center_freq, self.sample_rate
             )
             
+            # If cellular signal detected, try to extract actual IMEIs
+            if cellular_data:
+                # Determine the technology based on the detected signal
+                tech_type = cellular_data.get('tech', 'auto')
+                
+                # Try to extract actual IMEIs using the cellular decoder
+                try:
+                    # Only attempt IMEI extraction for strong signals
+                    if cellular_data.get('power', -100) > -50:
+                        print(f"Attempting to extract actual IMEIs for {tech_type} signal at {self.center_freq/1e6} MHz")
+                        imeis = self.cellular_decoder.capture_and_decode(
+                            self.center_freq, 
+                            duration=5,  # 5 seconds capture
+                            technology=tech_type
+                        )
+                        
+                        # If we found actual IMEIs, update the cellular data
+                        if imeis:
+                            print(f"Found actual IMEIs: {imeis}")
+                            # Use the first IMEI found
+                            cellular_data['imei'] = imeis[0]
+                            cellular_data['extracted_imei'] = True
+                            # Store all IMEIs found
+                            cellular_data['all_imeis'] = imeis
+                except Exception as e:
+                    print(f"Error extracting IMEIs: {e}")
+            
             # Convert to MHz for better readability
             freqs_mhz = freqs / 1e6
             
@@ -251,11 +281,42 @@ class RFMonitor:
                 unique_digits = "".join([str(random.randint(0, 9)) for _ in range(10)])
                 simulated_id = f"{country_code}{network_code}{unique_digits}"
                 
+                # Determine device type based on frequency
+                freq_mhz = freq
+                device_type = 'Unknown'
+                
+                # Check if this is a UMTS frequency
+                if 1920 <= freq_mhz <= 1980 or 2110 <= freq_mhz <= 2170:  # UMTS Band 1
+                    device_type = 'UMTS'
+                elif 1850 <= freq_mhz <= 1910 or 1930 <= freq_mhz <= 1990:  # UMTS Band 2
+                    device_type = 'UMTS'
+                elif 1710 <= freq_mhz <= 1755 or 2110 <= freq_mhz <= 2155:  # UMTS Band 4
+                    device_type = 'UMTS'
+                elif 824 <= freq_mhz <= 849 or 869 <= freq_mhz <= 894:  # UMTS Band 5
+                    device_type = 'UMTS'
+                elif 880 <= freq_mhz <= 915 or 925 <= freq_mhz <= 960:  # UMTS Band 8
+                    device_type = 'UMTS'
+                # LTE bands
+                elif 699 <= freq_mhz <= 746:  # LTE Band 12, 13, 17
+                    device_type = 'LTE'
+                elif 2500 <= freq_mhz <= 2690:  # LTE Band 7
+                    device_type = 'LTE'
+                elif 2305 <= freq_mhz <= 2360:  # LTE Band 30
+                    device_type = 'LTE'
+                # GSM bands (if not already categorized)
+                elif 890 <= freq_mhz <= 960:  # GSM 900
+                    device_type = 'GSM'
+                elif 1710 <= freq_mhz <= 1880:  # GSM 1800
+                    device_type = 'GSM'
+                else:
+                    # If we can't determine, choose randomly but weighted
+                    device_type = random.choices(['GSM', 'UMTS', 'LTE'], weights=[0.2, 0.3, 0.5])[0]
+                
                 device = {
                     'id': device_id,
                     'frequency': freq,
                     'power': power,
-                    'type': random.choice(['GSM', 'LTE', 'UMTS']),
+                    'type': device_type,
                     'first_seen': datetime.now().isoformat(),
                     'last_seen': datetime.now().isoformat(),
                     'whitelisted': False,

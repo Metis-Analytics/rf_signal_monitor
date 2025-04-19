@@ -47,6 +47,9 @@ DEFAULT_MONITORING_LOCATION = {
     'longitude': -98.5795  # Approximate center of US
 }
 
+# Initialize last save time for periodic saving
+last_save_time = datetime.now()
+
 # Try to initialize the GPS module with the real device first
 gps_module = GPSModule(port=GPS_PORT, simulation_mode=False, force_real=False)
 gps_connected = False
@@ -273,72 +276,115 @@ def cleanup_expired_devices():
     last_cleanup_time = current_time
 
 def update_device_db(device):
-    device_id = device['id']
+    """Update the devices database with a new or updated device"""
+    global devices_db
+    global last_save_time
     
-    # Check if device exists in database
-    if device_id in devices_db:
-        # Update existing device
-        existing_device = devices_db[device_id]
+    try:
+        device_id = device.get('id')
+        if not device_id:
+            return
         
-        # Check if location has changed significantly
-        if 'location' in device and 'location' in existing_device:
-            new_lat = device['location'].get('lat') or device['location'].get('latitude')
-            new_lng = device['location'].get('lng') or device['location'].get('longitude')
-            old_lat = existing_device['location'].get('lat') or existing_device['location'].get('latitude')
-            old_lng = existing_device['location'].get('lng') or existing_device['location'].get('longitude')
+        # Check if this is a new device or an update
+        is_new = device_id not in devices_db
+        
+        if is_new:
+            # New device - add to database with current timestamp
+            now = datetime.now().isoformat()
+            device['first_seen'] = now
+            device['last_seen'] = now
             
-            # Only update if location has changed by more than 0.0001 degrees (about 10 meters)
-            location_changed = (
-                abs(float(new_lat) - float(old_lat)) > 0.0001 or 
-                abs(float(new_lng) - float(old_lng)) > 0.0001
-            )
+            # Check if this device has an extracted IMEI
+            if device.get('extracted_imei', False):
+                logger.info(f"New device with extracted IMEI: {device.get('imei')}")
             
-            if location_changed:
-                logger.info(f"Device {device_id} location changed")
-                existing_device['location'] = device['location']
-        
-        # Update last seen time
-        existing_device['last_seen'] = device['last_seen']
-        
-        # Update power level
-        if 'power' in device:
-            existing_device['power'] = device['power']
-        
-        # Update frequency if it changed
-        if 'frequency' in device and device['frequency'] != existing_device.get('frequency'):
-            existing_device['frequency'] = device['frequency']
-        
-        # Preserve whitelist status - prioritize existing status if already whitelisted
-        if existing_device.get('whitelisted', False):
-            existing_device['whitelisted'] = True
+            # Add to database
+            devices_db[device_id] = device
+            logger.info(f"Added new device {device_id} to database")
         else:
-            existing_device['whitelisted'] = device.get('whitelisted', False)
+            # Existing device - update last_seen and any changed properties
+            existing = devices_db[device_id]
+            existing['last_seen'] = datetime.now().isoformat()
+            
+            # Update power if provided
+            if 'power' in device:
+                existing['power'] = device['power']
+            
+            # Update frequency if provided
+            if 'frequency' in device:
+                existing['frequency'] = device['frequency']
+            
+            # Update extracted IMEI if available
+            if device.get('extracted_imei', False):
+                existing['imei'] = device.get('imei')
+                existing['extracted_imei'] = True
+                if 'all_imeis' in device:
+                    existing['all_imeis'] = device.get('all_imeis')
+                logger.info(f"Updated device {device_id} with extracted IMEI: {device.get('imei')}")
+            
+            # Update location if provided
+            if 'location' in device and device['location']:
+                existing['location'] = device['location']
+            
+            # Update type if provided
+            if 'type' in device:
+                existing['type'] = device['type']
+            
+            # Update subtype if provided
+            if 'subtype' in device:
+                existing['subtype'] = device['subtype']
+            
+            # Update manufacturer if provided
+            if 'manufacturer' in device:
+                existing['manufacturer'] = device['manufacturer']
+            
+            logger.debug(f"Updated device {device_id} in database")
         
-        # If this device is whitelisted, make sure we preserve whitelist data
-        if device_id in whitelist:
-            existing_device['whitelisted'] = True
-            # Preserve name and type from whitelist
-            if 'name' in whitelist[device_id]:
-                existing_device['name'] = whitelist[device_id]['name']
-            if 'type' in whitelist[device_id]:
-                existing_device['type'] = whitelist[device_id]['type']
-    else:
-        # Add new device to database
-        devices_db[device_id] = device
+        # Save the updated database periodically
+        # Don't save on every update to avoid excessive disk I/O
+        now = datetime.now()
+        if (now - last_save_time).total_seconds() > 60:  # Save every minute
+            save_devices_db()
+            last_save_time = now
+            
+    except Exception as e:
+        logger.error(f"Error updating device database: {e}")
+        traceback.print_exc()
+
+# Helper function to get current GPS location
+def get_current_gps_location():
+    """Get the current GPS location from the GPS module"""
+    try:
+        if gps_module.is_connected():
+            gps_data = gps_module.get_location()
+            if gps_data:
+                # Ensure all numeric values are converted to float
+                try:
+                    location = {
+                        "latitude": float(gps_data['latitude']),
+                        "longitude": float(gps_data['longitude']),
+                        "altitude": float(gps_data.get('altitude', 0)),
+                        "num_satellites": str(gps_data.get('num_satellites', 0)),
+                        "hdop": float(gps_data.get('hdop', 0)),
+                        "simulated": gps_data.get('simulated', not gps_module.is_using_real_gps())
+                    }
+                    return location
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting GPS data: {e}")
         
-        # Ensure whitelist status is correctly set for new devices
-        if device_id in whitelist:
-            devices_db[device_id]['whitelisted'] = True
-            # Update with whitelist information
-            for key, value in whitelist[device_id].items():
-                if key not in ['last_seen']:  # Don't overwrite timestamp
-                    devices_db[device_id][key] = value
-        
-        logger.info(f"Added new device to database: {device_id}")
-    
-    # Save the database periodically
-    if len(devices_db) % 5 == 0:  # Save after every 5 new devices
-        save_devices_db()
+        # Fall back to default location if GPS is not available
+        logger.warning("GPS data not available, using default location")
+        return {
+            "latitude": DEFAULT_MONITORING_LOCATION['latitude'],
+            "longitude": DEFAULT_MONITORING_LOCATION['longitude'],
+            "altitude": 0,
+            "num_satellites": "0",
+            "hdop": 99.9,  # High value indicates poor accuracy
+            "simulated": True
+        }
+    except Exception as e:
+        logger.error(f"Error getting GPS location: {e}")
+        return DEFAULT_MONITORING_LOCATION
 
 # Load whitelist and devices database on startup
 load_whitelist()
@@ -377,27 +423,7 @@ async def get_devices():
             current_devices = []
             if spectrum_data and 'devices' in spectrum_data:
                 # Get current GPS location for the monitoring station
-                monitoring_station_location = None
-                if gps_module.is_connected():
-                    gps_location = gps_module.get_location()
-                    if gps_location:
-                        # Ensure all numeric values are converted to float
-                        try:
-                            latitude = float(gps_location['latitude'])
-                            longitude = float(gps_location['longitude'])
-                            altitude = float(gps_location.get('altitude', 0))
-                            num_satellites = str(gps_location.get('num_satellites', 0))  # Keep as string for display
-                            hdop = float(gps_location.get('hdop', 0))
-                            
-                            monitoring_station_location = {
-                                "latitude": latitude,
-                                "longitude": longitude,
-                                "altitude": altitude,
-                                "num_satellites": num_satellites,
-                                "hdop": hdop
-                            }
-                        except Exception as e:
-                            logger.error(f"Error processing GPS data: {e}")
+                monitoring_station_location = get_current_gps_location()
                 
                 # First, create a mapping of device IDs to their whitelist status
                 # This ensures we don't lose whitelist information during processing
@@ -560,7 +586,10 @@ async def get_monitoring_station():
         return {
             "location": location,
             "using_real_gps": gps_module.is_using_real_gps(),
-            "is_connected": gps_module.is_connected()
+            "is_connected": gps_module.is_connected(),
+            "num_satellites": location.get("num_satellites", "0"),
+            "hdop": location.get("hdop", 99.9),
+            "simulated": location.get("simulated", True)
         }
     except Exception as e:
         logger.error(f"Error getting monitoring station location: {e}")
@@ -599,27 +628,7 @@ async def broadcast_data():
                     current_devices = []
                     if spectrum_data and 'devices' in spectrum_data:
                         # Get current GPS location for the monitoring station
-                        monitoring_station_location = None
-                        if gps_module.is_connected():
-                            gps_location = gps_module.get_location()
-                            if gps_location:
-                                # Ensure all numeric values are converted to float
-                                try:
-                                    latitude = float(gps_location['latitude'])
-                                    longitude = float(gps_location['longitude'])
-                                    altitude = float(gps_location.get('altitude', 0))
-                                    num_satellites = str(gps_location.get('num_satellites', 0))
-                                    hdop = float(gps_location.get('hdop', 0))
-                                    
-                                    monitoring_station_location = {
-                                        "latitude": latitude,
-                                        "longitude": longitude,
-                                        "altitude": altitude,
-                                        "num_satellites": num_satellites,
-                                        "hdop": hdop
-                                    }
-                                except Exception as e:
-                                    logger.error(f"Error processing GPS data: {e}")
+                        monitoring_station_location = get_current_gps_location()
                         
                         # Use the devices directly from the spectrum_data
                         for device in spectrum_data['devices']:
@@ -634,21 +643,26 @@ async def broadcast_data():
                             
                             # Add location information to the device (based on monitoring station)
                             if monitoring_station_location:
-                                # Add a small random offset to make devices appear around the monitoring station
+                                # Only add small random offsets if we have real GPS data
                                 # This simulates different device locations
-                                lat_offset = (random.random() - 0.5) * 0.005  # ~500m radius
-                                lng_offset = (random.random() - 0.5) * 0.005
+                                if not monitoring_station_location.get('simulated', True):
+                                    # Smaller offsets for real GPS data (more precise)
+                                    lat_offset = (random.random() - 0.5) * 0.002  # ~200m radius
+                                    lng_offset = (random.random() - 0.5) * 0.002
+                                else:
+                                    # Larger offsets for simulated data
+                                    lat_offset = (random.random() - 0.5) * 0.005  # ~500m radius
+                                    lng_offset = (random.random() - 0.5) * 0.005
                                 
                                 device['location'] = {
                                     "latitude": monitoring_station_location["latitude"] + lat_offset,
-                                    "longitude": monitoring_station_location["longitude"] + lng_offset
+                                    "longitude": monitoring_station_location["longitude"] + lng_offset,
+                                    "using_gps": not monitoring_station_location.get('simulated', True)
                                 }
                             else:
-                                # If no GPS, use a default location
-                                device['location'] = {
-                                    "latitude": 38.897957,  # Default to a location
-                                    "longitude": -77.036560
-                                }
+                                # This should rarely happen now with our improved GPS handling
+                                logger.warning("No monitoring station location available")
+                                device['location'] = DEFAULT_MONITORING_LOCATION
                             
                             # Add to current devices list
                             current_devices.append(device)
