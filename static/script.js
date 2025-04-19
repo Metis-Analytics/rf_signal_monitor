@@ -21,7 +21,12 @@ const deviceStatus = {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize components
+    console.log("DOM Content Loaded - Initializing application");
+    
+    // Initialize map first to ensure it's available
+    initializeMap();
+    
+    // Initialize other components
     initializeWebSocket();
     initializeChart();
     initializeModal();
@@ -47,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize the whitelist status element
     const whitelistStatus = document.getElementById('whitelistStatus');
     if (whitelistStatus) {
-        whitelistStatus.innerHTML = 'Whitelist: <span class="badge bg-secondary">Loading...</span>';
+        whitelistStatus.innerHTML = 'WHITELIST: <span class="badge">Loading...</span>';
     }
     
     // Initialize the whitelist filter status
@@ -61,6 +66,16 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('/api/devices')
         .then(response => response.json())
         .then(data => {
+            // Process device data to ensure all required properties exist
+            if (data.devices && Array.isArray(data.devices)) {
+                data.devices.forEach(device => {
+                    // Make sure frequency_mhz property exists or create it from frequency
+                    if (!device.frequency_mhz && device.frequency) {
+                        device.frequency_mhz = device.frequency;
+                    }
+                });
+            }
+            
             currentDevices = data.devices || [];
             updateDeviceList(currentDevices);
             updateWhitelistCount();
@@ -107,6 +122,16 @@ function initializeWebSocket() {
                 
                 // Store current devices
                 currentDevices = data.devices || [];
+                
+                // Process device data to ensure all required properties exist
+                if (currentDevices && Array.isArray(currentDevices)) {
+                    currentDevices.forEach(device => {
+                        // Make sure frequency_mhz property exists or create it from frequency
+                        if (!device.frequency_mhz && device.frequency) {
+                            device.frequency_mhz = device.frequency;
+                        }
+                    });
+                }
                 
                 // Track active and inactive devices
                 const now = new Date();
@@ -233,6 +258,16 @@ function initializeWebSocket() {
 function processDeviceData(data) {
     if (!data.devices) return;
     
+    // Process device data to ensure all required properties exist
+    if (data.devices && Array.isArray(data.devices)) {
+        data.devices.forEach(device => {
+            // Make sure frequency_mhz property exists or create it from frequency
+            if (!device.frequency_mhz && device.frequency) {
+                device.frequency_mhz = device.frequency;
+            }
+        });
+    }
+    
     // Process each device
     data.devices.forEach(device => {
         // Set device status (active/inactive)
@@ -260,9 +295,11 @@ function processDeviceData(data) {
             );
             
             const geofenceLatLng = geofenceCircle.getLatLng();
-            const distance = getDistance(deviceLatLng, geofenceLatLng);
-            
+            const distance = deviceLatLng.distanceTo(geofenceLatLng);
             device.insideGeofence = distance <= geofenceCircle.getRadius();
+            
+            // Update marker appearance
+            updateMarkerForDevice(device);
         }
     });
     
@@ -359,56 +396,103 @@ function initializeChart() {
 
 // Initialize Leaflet map
 function initializeMap(devices) {
-    if (!document.getElementById('map')) {
-        console.error("Map container not found");
-        return;
-    }
-
-    try {
-        // Initialize the map with the user's location
-        map = L.map('map').setView([userLocation.lat, userLocation.lng], 13);
+    console.log("Initializing map...");
+    
+    // Wait for DOM to be fully loaded
+    setTimeout(() => {
+        const mapContainer = document.getElementById('map');
         
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
-        
-        // Add user marker at location
-        userMarker = L.marker([userLocation.lat, userLocation.lng], {
-            icon: L.divIcon({
-                className: 'user-marker',
-                html: '<div class="user-marker-icon"></div>',
-                iconSize: [20, 20]
-            })
-        }).addTo(map);
-        
-        // Add a popup with detailed GPS information
-        if (window.latestData && window.latestData.monitoring_station) {
-            const popupContent = createMonitoringStationPopup(window.latestData.monitoring_station);
-            userMarker.bindPopup(popupContent).openPopup();
-        } else {
-            // Fallback if we don't have the latest data
-            const locationSource = usingGPS ? "GPS" : "Browser";
-            userMarker.bindPopup(`Monitoring Station (${locationSource})`).openPopup();
+        if (!mapContainer) {
+            console.error("Map container not found");
+            return;
         }
         
-        // Listen for map clicks to set geofence
-        map.on('click', function(e) {
-            if (window.settingGeofence) {
-                setGeofenceAtPosition(e.latlng);
-                window.settingGeofence = false;
+        console.log("Map container found, dimensions:", mapContainer.offsetWidth, "x", mapContainer.offsetHeight);
+        
+        try {
+            // Force any existing map to be removed
+            if (map) {
+                map.remove();
+                console.log("Removed existing map instance");
             }
-        });
-        
-        mapInitialized = true;
-        console.log("Map initialized successfully with center:", userLocation);
-        
-        // Update markers for all devices if provided
-        if (devices && devices.length > 0) {
-            updateMarkers(devices);
+            
+            // Force map container to be visible
+            mapContainer.style.height = "800px";
+            mapContainer.style.width = "100%";
+            mapContainer.style.display = "block";
+            mapContainer.style.visibility = "visible";
+            mapContainer.style.position = "relative";
+            mapContainer.style.zIndex = "1";
+            
+            // Initialize the map with the user's location
+            map = L.map('map', {
+                zoomControl: true,
+                attributionControl: true,
+                maxZoom: 19,
+                minZoom: 3
+            }).setView([userLocation.lat, userLocation.lng], 13);
+            
+            console.log("Map object created:", map);
+            
+            // Add the tile layer with a timeout to ensure DOM is ready
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19
+            }).addTo(map);
+            
+            console.log("Tile layer added to map");
+            
+            // Add user marker at location
+            userMarker = L.marker([userLocation.lat, userLocation.lng], {
+                icon: L.divIcon({
+                    className: 'user-marker',
+                    html: '<div class="user-marker-icon"></div>',
+                    iconSize: [20, 20]
+                })
+            }).addTo(map);
+            
+            console.log("User marker added to map");
+            
+            // Add a popup with detailed GPS information
+            if (window.latestData && window.latestData.monitoring_station) {
+                const popupContent = createMonitoringStationPopup(window.latestData.monitoring_station);
+                userMarker.bindPopup(popupContent).openPopup();
+            } else {
+                // Fallback if we don't have the latest data
+                const locationSource = usingGPS ? "GPS" : "Browser";
+                userMarker.bindPopup(`Monitoring Station (${locationSource})`).openPopup();
+            }
+            
+            // Listen for map clicks to set geofence
+            map.on('click', function(e) {
+                if (window.settingGeofence) {
+                    setGeofenceAtPosition(e.latlng);
+                    window.settingGeofence = false;
+                }
+            });
+            
+            // Force a map resize to ensure it renders properly
+            map.invalidateSize(true);
+            
+            mapInitialized = true;
+            console.log("Map initialized successfully with center:", userLocation);
+            
+            // Update markers for all devices if provided
+            if (devices && devices.length > 0) {
+                updateMarkers(devices);
+            }
+            
+            // Add a resize handler to ensure map stays visible when window is resized
+            window.addEventListener('resize', function() {
+                if (map) {
+                    console.log("Window resized, invalidating map size");
+                    map.invalidateSize(true);
+                }
+            });
+        } catch (error) {
+            console.error("Error initializing map:", error);
         }
-    } catch (error) {
-        console.error("Error initializing map:", error);
-    }
+    }, 500); // Increased timeout to ensure DOM is ready
 }
 
 // Set geofence at the clicked position
@@ -610,7 +694,7 @@ function updateMarkerForDevice(device) {
                     <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
                     <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
                     <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
-                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}</div>
+                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown'}</div>
                     <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
                     ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
                     ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
@@ -633,9 +717,9 @@ function updateMarkerForDevice(device) {
             
             // Update popup content
             const popupContent = `
-                <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong><br>
+                <strong>${device.name || `Device at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`}</strong><br>
                 Type: ${device.type || 'Unknown'}<br>
-                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}<br>
+                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown'}<br>
                 Signal: ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}<br>
                 ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
                 ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
@@ -653,7 +737,7 @@ function updateMarkerForDevice(device) {
                     <div class="device-detail"><strong>Phone Type:</strong> ${device.subtype || device.type || 'Cell Phone'}</div>
                     <div class="device-detail"><strong>Manufacturer:</strong> ${device.manufacturer || 'Unknown'}</div>
                     <div class="device-detail"><strong>Technology:</strong> ${device.tech || 'Cellular'}</div>
-                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}</div>
+                    <div class="device-detail"><strong>Frequency:</strong> ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown'}</div>
                     <div class="device-detail"><strong>Signal Strength:</strong> ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}</div>
                     ${device.band ? `<div class="device-detail"><strong>Band:</strong> ${device.band}</div>` : ''}
                     ${device.link_type ? `<div class="device-detail"><strong>Link Type:</strong> ${device.link_type}</div>` : ''}
@@ -676,9 +760,9 @@ function updateMarkerForDevice(device) {
             
             // Add popup
             const popupContent = `
-                <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong><br>
+                <strong>${device.name || `Device at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`}</strong><br>
                 Type: ${device.type || 'Unknown'}<br>
-                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown'}<br>
+                Frequency: ${device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown'}<br>
                 Signal: ${device.power ? device.power.toFixed(1) + ' dB' : 'Unknown'}<br>
                 ${device.whitelisted ? '<span class="text-success">Whitelisted</span><br>' : ''}
                 ${device.isActive ? '<span class="text-primary">Active</span>' : '<span class="text-secondary">Inactive</span>'}
@@ -744,7 +828,7 @@ function updateDeviceList(devices) {
                 <div>
                     <div class="d-flex align-items-center">
                         <span class="signal-indicator ${signalStrength.class}"></span>
-                        <strong>${device.name || `Device at ${device.frequency_mhz.toFixed(2)} MHz`}</strong>
+                        <strong>${device.name || `Device at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`}</strong>
                         ${device.whitelisted ? '<span class="badge bg-success ms-2">Whitelisted</span>' : ''}
                         ${device.insideGeofence === false ? '<span class="badge bg-danger ms-2">Outside Geofence</span>' : ''}
                         ${!device.isActive ? '<span class="badge bg-secondary ms-2">Inactive</span>' : ''}
@@ -767,7 +851,7 @@ function updateDeviceList(devices) {
 function updateSpectrum(data) {
     if (!data.devices || !data.devices.length) return;
     
-    const frequencies = data.devices.map(d => d.frequency);
+    const frequencies = data.devices.map(d => d.frequency_mhz ? d.frequency_mhz : d.frequency);
     const powers = data.devices.map(d => d.power);
     
     spectrumChart.data.labels = frequencies;
@@ -783,7 +867,7 @@ function showDeviceDetails(device) {
     const addWhitelistBtn = document.getElementById('addWhitelistBtn');
     const removeWhitelistBtn = document.getElementById('removeWhitelistBtn');
     
-    // Set device ID in buttons' data attributes
+    // Set device ID in buttons' data attributes (for backward compatibility)
     addWhitelistBtn.setAttribute('data-device-id', device.id);
     removeWhitelistBtn.setAttribute('data-device-id', device.id);
     
@@ -793,15 +877,27 @@ function showDeviceDetails(device) {
     
     // Set modal title with manufacturer if available
     const deviceTitle = device.name || 
-        `${device.manufacturer || ''} ${device.subtype || device.type || 'Cell Phone'} at ${device.frequency_mhz.toFixed(2)} MHz`;
+        `${device.manufacturer || ''} ${device.subtype || device.type || 'Cell Phone'} at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`;
     modalTitle.textContent = deviceTitle;
     
     // Format frequency
-    const frequency = device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : 'Unknown';
+    const frequency = device.frequency_mhz ? `${device.frequency_mhz.toFixed(2)} MHz` : device.frequency ? `${device.frequency.toFixed(2)} MHz` : 'Unknown';
     
     // Format timestamps
     const firstSeen = device.first_seen ? new Date(device.first_seen).toLocaleString() : 'Unknown';
     const lastSeen = device.last_seen ? new Date(device.last_seen).toLocaleString() : 'Unknown';
+    
+    // IMPORTANT: Get the device ID input before updating the modal body
+    let deviceIdInput = document.getElementById('deviceId');
+    // If it doesn't exist, create it
+    if (!deviceIdInput) {
+        deviceIdInput = document.createElement('input');
+        deviceIdInput.type = 'hidden';
+        deviceIdInput.id = 'deviceId';
+        modalBody.appendChild(deviceIdInput);
+    }
+    // Set the device ID
+    deviceIdInput.value = device.id;
     
     // Create device details HTML with expanded cell phone information
     const detailsHTML = `
@@ -828,43 +924,129 @@ function showDeviceDetails(device) {
             </div>
             ${device.confidence ? `<div class="device-detail"><strong>Detection Confidence:</strong> ${(device.confidence * 100).toFixed(0)}%</div>` : ''}
         </div>
+        
+        <!-- Form fields for whitelist -->
+        <div class="mb-3">
+            <label for="deviceName" class="form-label">Name</label>
+            <input type="text" class="form-control" id="deviceName" value="${device.name || `Device at ${(device.frequency_mhz ? device.frequency_mhz.toFixed(2) : device.frequency ? device.frequency.toFixed(2) : '0.00')} MHz`}">
+        </div>
+        <div class="mb-3">
+            <label for="deviceType" class="form-label">Type</label>
+            <select class="form-control" id="deviceType">
+                <option value="Cellular" ${(device.type === 'Cellular') ? 'selected' : ''}>Cellular</option>
+                <option value="WiFi" ${(device.type === 'WiFi') ? 'selected' : ''}>WiFi</option>
+                <option value="Bluetooth" ${(device.type === 'Bluetooth') ? 'selected' : ''}>Bluetooth</option>
+                <option value="GSM" ${(device.type === 'GSM') ? 'selected' : ''}>GSM</option>
+                <option value="LTE" ${(device.type === 'LTE') ? 'selected' : ''}>LTE</option>
+                <option value="UMTS" ${(device.type === 'UMTS') ? 'selected' : ''}>UMTS</option>
+                <option value="Unknown" ${(!device.type || device.type === 'Unknown') ? 'selected' : ''}>Unknown</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label for="deviceFreq" class="form-label">Frequency (MHz)</label>
+            <input type="number" class="form-control" id="deviceFreq" value="${device.frequency_mhz ? device.frequency_mhz : device.frequency ? device.frequency : 0}">
+        </div>
+        <div class="mb-3">
+            <label for="deviceImsi" class="form-label">IMSI/ID (if available)</label>
+            <input type="text" class="form-control" id="deviceImsi" readonly value="${device.simulated_id || ''}">
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="deviceLat" class="form-label">Latitude</label>
+                    <input type="text" class="form-control" id="deviceLat" readonly value="${device.location ? device.location.latitude || '' : ''}">
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="deviceLng" class="form-label">Longitude</label>
+                    <input type="text" class="form-control" id="deviceLng" readonly value="${device.location ? device.location.longitude || '' : ''}">
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="deviceFirstSeen" class="form-label">First Seen</label>
+                    <input type="text" class="form-control" id="deviceFirstSeen" readonly value="${firstSeen}">
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="deviceLastSeen" class="form-label">Last Seen</label>
+                    <input type="text" class="form-control" id="deviceLastSeen" readonly value="${lastSeen}">
+                </div>
+            </div>
+        </div>
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="deviceWhitelisted" disabled ${device.whitelisted ? 'checked' : ''}>
+                <label class="form-check-label" for="deviceWhitelisted">
+                    Whitelisted
+                </label>
+            </div>
+        </div>
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="deviceActive" disabled ${device.isActive ? 'checked' : ''}>
+                <label class="form-check-label" for="deviceActive">
+                    Active
+                </label>
+            </div>
+        </div>
     `;
     
+    // Update the modal body
     modalBody.innerHTML = detailsHTML;
     
-    // Update whitelist checkbox
-    const whitelistedCheckbox = document.getElementById('deviceWhitelisted');
-    if (whitelistedCheckbox) {
-        whitelistedCheckbox.checked = device.whitelisted || false;
-    }
-    
-    // Update active checkbox
-    const activeCheckbox = document.getElementById('deviceActive');
-    if (activeCheckbox) {
-        activeCheckbox.checked = device.isActive || false;
-    }
+    // Re-append the device ID input to the modal body
+    modalBody.insertBefore(deviceIdInput, modalBody.firstChild);
     
     deviceModal.show();
 }
 
 // Add device to whitelist
 async function addToWhitelist() {
-    const deviceId = document.getElementById('deviceId').value;
+    const deviceIdElement = document.getElementById('deviceId');
+    if (!deviceIdElement) {
+        console.error("Device ID element not found");
+        alert("Error: Could not find device ID element");
+        return;
+    }
+    
+    const deviceId = deviceIdElement.value;
+    
+    if (!deviceId) {
+        console.error("No device ID found");
+        return;
+    }
+    
+    // Find the device in the currentDevices array
     const device = currentDevices.find(d => d.id === deviceId);
     
     if (!device) {
-        console.error("Device not found in currentDevices");
-        alert("Error: Device not found");
+        console.error("Device not found in currentDevices array");
+        alert("Error: Device not found in the current devices list");
         return;
     }
     
     try {
         console.log("Adding device to whitelist:", deviceId);
         
+        const deviceNameElement = document.getElementById('deviceName');
+        const deviceTypeElement = document.getElementById('deviceType');
+        const deviceFreqElement = document.getElementById('deviceFreq');
+        
+        if (!deviceNameElement || !deviceTypeElement || !deviceFreqElement) {
+            console.error("One or more device form elements not found");
+            alert("Error: Could not find all required form elements");
+            return;
+        }
+        
         const updatedDevice = {
-            name: document.getElementById('deviceName').value,
-            type: document.getElementById('deviceType').value,
-            frequency: parseFloat(document.getElementById('deviceFreq').value),
+            name: deviceNameElement.value,
+            type: deviceTypeElement.value,
+            frequency: parseFloat(deviceFreqElement.value),
             power: device.power || 0,
             first_seen: device.first_seen || new Date().toISOString(),
             last_seen: device.last_seen || new Date().toISOString()
@@ -926,7 +1108,14 @@ async function addToWhitelist() {
 
 // Remove device from whitelist
 async function removeFromWhitelist() {
-    const deviceId = document.getElementById('deviceId').value;
+    const deviceIdElement = document.getElementById('deviceId');
+    if (!deviceIdElement) {
+        console.error("Device ID element not found");
+        alert("Error: Could not find device ID element");
+        return;
+    }
+    
+    const deviceId = deviceIdElement.value;
     
     if (!deviceId) {
         console.error("No device ID found");
@@ -935,6 +1124,16 @@ async function removeFromWhitelist() {
     
     try {
         console.log("Removing device from whitelist:", deviceId);
+        
+        const deviceNameElement = document.getElementById('deviceName');
+        const deviceTypeElement = document.getElementById('deviceType');
+        const deviceFreqElement = document.getElementById('deviceFreq');
+        
+        if (!deviceNameElement || !deviceTypeElement || !deviceFreqElement) {
+            console.error("One or more device form elements not found");
+            alert("Error: Could not find all required form elements");
+            return;
+        }
         
         const response = await fetch(`/api/whitelist/${deviceId}`, {
             method: 'DELETE',
@@ -965,7 +1164,9 @@ async function removeFromWhitelist() {
             updateWhitelistCount();
             
             // Close the modal
-            deviceModal.hide();
+            if (deviceModal) {
+                deviceModal.hide();
+            }
             
             // Show success message
             alert("Device removed from whitelist successfully");
@@ -999,7 +1200,7 @@ function updateWhitelistCount() {
     if (whitelistStatus) {
         const badgeClass = whitelistedDevices.length > 0 ? 'bg-success' : 'bg-secondary';
         const plural = whitelistedDevices.length !== 1 ? 's' : '';
-        whitelistStatus.innerHTML = `Whitelist: <span class="badge ${badgeClass}">${whitelistedDevices.length} device${plural}</span>`;
+        whitelistStatus.innerHTML = `WHITELIST: <span class="badge ${badgeClass}">${whitelistedDevices.length} device${plural}</span>`;
         console.log("Updated whitelist status element");
     } else {
         console.error("Could not find whitelistStatus element");
