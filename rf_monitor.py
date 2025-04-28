@@ -67,23 +67,43 @@ class RFMonitor:
         self.center_freq = self.CELLULAR_BANDS[self.current_band_index] * 1e6
         return self.center_freq
     
-    def capture_samples(self, num_samples=1048576):
-        """Capture RF samples focusing on cell phone frequencies"""
+    # Cache to store recent samples by frequency
+    _sample_cache = {}
+    _cache_timestamp = {}
+    _cache_max_age = 2.0  # Maximum age in seconds
+    _sample_count = 0
+    
+    def capture_samples(self, num_samples=524288):  # Reduced sample size by half
+        """Capture RF samples focusing on cell phone frequencies with caching"""
         try:
-            # Increase frequency band rotation rate to cover more cellular bands
-            if random.random() < 0.5:  # 50% chance to change frequency on each capture
+            current_time = time.time()
+            
+            # Check if we should change frequency
+            # Only change frequency every few captures to improve performance
+            if self._sample_count % 3 == 0:  # Less frequent band rotation
                 self.next_frequency_band()
+            self._sample_count += 1
             
-            # Create temporary files
-            samples_file = 'samples.bin'
+            # Check if we have recent cached samples for this frequency
+            freq_key = str(int(self.center_freq))
+            if (freq_key in self._sample_cache and 
+                freq_key in self._cache_timestamp and
+                current_time - self._cache_timestamp[freq_key] < self._cache_max_age):
+                # Use cached samples
+                print(f"Using cached samples for {self.center_freq/1e6:.2f} MHz")
+                return self._sample_cache[freq_key]
             
-            # Construct hackrf_transfer command
+            # Create temporary files with unique names to avoid conflicts
+            temp_id = str(int(time.time() * 1000))[-6:]
+            samples_file = f'samples_{temp_id}.bin'
+            
+            # Construct hackrf_transfer command with reduced sample size
             cmd = [
                 'hackrf_transfer',
                 '-r', samples_file,
                 '-f', str(int(self.center_freq)),
                 '-s', str(int(self.sample_rate)),
-                '-n', str(num_samples),
+                '-n', str(num_samples),  # Reduced from 1048576
                 '-l', '40',  # LNA gain
                 '-g', '40',  # VGA gain
                 '-a', '1'    # Amp enable
@@ -96,8 +116,14 @@ class RFMonitor:
             if result.returncode != 0:
                 raise Exception(f"hackrf_transfer failed: {result.stderr}")
             
-            # Wait a moment for file to be written
-            time.sleep(1)
+            # No sleep - we'll check for the file directly
+            # Give the file system a moment to register the file, much shorter than 1s
+            max_retries = 10
+            retry_delay = 0.1
+            for _ in range(max_retries):
+                if os.path.exists(samples_file) and os.path.getsize(samples_file) > 0:
+                    break
+                time.sleep(retry_delay)
             
             # Check if file exists and has content
             if not os.path.exists(samples_file):
@@ -111,7 +137,10 @@ class RFMonitor:
                 data = f.read()
             
             # Clean up
-            os.remove(samples_file)
+            try:
+                os.remove(samples_file)
+            except Exception as e:
+                print(f"Warning: Could not remove temporary file: {e}")
             
             # Convert to numpy array
             samples = np.frombuffer(data, dtype=np.int8)
@@ -119,6 +148,16 @@ class RFMonitor:
             # Convert to complex numbers (I/Q data)
             samples = samples[::2] + 1j * samples[1::2]
             samples = samples.astype(np.complex64)
+            
+            # Cache the samples
+            self._sample_cache[freq_key] = samples
+            self._cache_timestamp[freq_key] = current_time
+            
+            # Clean old cache entries
+            for key in list(self._cache_timestamp.keys()):
+                if current_time - self._cache_timestamp[key] > self._cache_max_age:
+                    del self._sample_cache[key]
+                    del self._cache_timestamp[key]
             
             return samples
             

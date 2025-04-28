@@ -39,7 +39,7 @@ rf_monitor = RFMonitor()
 
 # Initialize GPS module - update the port to match your GPS device
 # Common ports: 'COM3' on Windows, '/dev/ttyUSB0' or '/dev/ttyACM0' on Linux
-GPS_PORT = os.environ.get('GPS_PORT', 'COM8')  # Default to COM5, override with environment variable
+GPS_PORT = os.environ.get('GPS_PORT', 'COM3')  # Default to COM5, override with environment variable
 
 # Default monitoring location (used when GPS is not available)
 DEFAULT_MONITORING_LOCATION = {
@@ -611,90 +611,154 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info(f"WebSocket client disconnected. Remaining connections: {len(connections)}")
 
 
+# Global cache for spectrum data to reduce processing overhead
+_last_spectrum_data = None
+_last_spectrum_time = 0
+_spectrum_update_interval = 0.5  # Update spectrum data every 0.5 seconds instead of every loop
+_device_update_counter = 0
+_max_device_count = 50  # Maximum devices to process in a single update
+
 async def broadcast_data():
-    """Broadcast RF data to all connected WebSocket clients"""
+    """Broadcast RF data to all connected WebSocket clients with optimized performance"""
+    global _last_spectrum_data, _last_spectrum_time, _device_update_counter
+    
+    # Get monitoring station location once at startup to reduce GPS queries
+    monitoring_station_location = get_current_gps_location()
+    last_location_update = time.time()
+    location_update_interval = 5.0  # Only update GPS location every 5 seconds
+    
     while True:
-        if connections:  # Only process if there are active connections
-            try:
-                # Run cleanup to remove expired devices
+        current_time = time.time()
+        
+        # Skip processing completely if no clients are connected
+        if not connections:
+            await asyncio.sleep(0.5)  # Wait a bit longer when no clients
+            continue
+        
+        try:
+            # Update GPS location periodically instead of every time
+            if current_time - last_location_update > location_update_interval:
+                monitoring_station_location = get_current_gps_location()
+                last_location_update = current_time
+            
+            # Run cleanup less frequently (once every 60 seconds)
+            if int(current_time) % 60 == 0:
                 cleanup_expired_devices()
                 
-                # Capture RF data
-                samples = rf_monitor.capture_samples()
+            # Capture RF data only if needed based on timing
+            update_spectrum = (current_time - _last_spectrum_time) >= _spectrum_update_interval
+            
+            if update_spectrum:
+                # Capture new RF data
+                samples = rf_monitor.capture_samples()  # Using optimized method with caching
                 if samples is not None:
-                    spectrum_data = rf_monitor.analyze_spectrum(samples)
+                    _last_spectrum_data = rf_monitor.analyze_spectrum(samples)
+                    _last_spectrum_time = current_time
                     
-                    # Process spectrum data to identify potential devices
-                    current_devices = []
-                    if spectrum_data and 'devices' in spectrum_data:
-                        # Get current GPS location for the monitoring station
-                        monitoring_station_location = get_current_gps_location()
+            # Process spectrum data only if we have valid data
+            current_devices = []
+            if _last_spectrum_data and 'devices' in _last_spectrum_data:
+                # Process a subset of devices each time to distribute load
+                devices_to_process = _last_spectrum_data['devices']
+                start_idx = _device_update_counter % max(1, len(devices_to_process))
+                
+                # Process at most _max_device_count devices per update
+                subset_devices = devices_to_process[start_idx:start_idx + _max_device_count]
+                if start_idx + _max_device_count > len(devices_to_process):
+                    # Wrap around to the beginning
+                    remaining = start_idx + _max_device_count - len(devices_to_process)
+                    subset_devices.extend(devices_to_process[:remaining])
+                
+                _device_update_counter += _max_device_count
+                
+                # Use the devices directly from the spectrum_data
+                for device in subset_devices:
+                    # Skip devices with low power to reduce processing
+                    if 'power' in device and device['power'] < -70:  # Skip weak signals
+                        continue
                         
-                        # Use the devices directly from the spectrum_data
-                        for device in spectrum_data['devices']:
-                            # Check if device is in whitelist and update accordingly
-                            device_id = device['id']
-                            device['whitelisted'] = device_id in whitelist
-                            if device_id in whitelist:
-                                device.update(whitelist[device_id])
-                            
-                            # Add current timestamp
-                            device['last_seen'] = datetime.now().isoformat()
-                            
-                            # Add location information to the device (based on monitoring station)
-                            if monitoring_station_location:
-                                # Only add small random offsets if we have real GPS data
-                                # This simulates different device locations
-                                if not monitoring_station_location.get('simulated', True):
-                                    # Smaller offsets for real GPS data (more precise)
-                                    lat_offset = (random.random() - 0.5) * 0.002  # ~200m radius
-                                    lng_offset = (random.random() - 0.5) * 0.002
-                                else:
-                                    # Larger offsets for simulated data
-                                    lat_offset = (random.random() - 0.5) * 0.005  # ~500m radius
-                                    lng_offset = (random.random() - 0.5) * 0.005
-                                
-                                device['location'] = {
-                                    "latitude": monitoring_station_location["latitude"] + lat_offset,
-                                    "longitude": monitoring_station_location["longitude"] + lng_offset,
-                                    "using_gps": not monitoring_station_location.get('simulated', True)
-                                }
-                            else:
-                                # This should rarely happen now with our improved GPS handling
-                                logger.warning("No monitoring station location available")
-                                device['location'] = DEFAULT_MONITORING_LOCATION
-                            
-                            # Add to current devices list
-                            current_devices.append(device)
+                    # Check if device is in whitelist and update accordingly
+                    device_id = device['id']
+                    device['whitelisted'] = device_id in whitelist
+                    if device_id in whitelist:
+                        device.update(whitelist[device_id])
+                    
+                    # Add current timestamp
+                    device['last_seen'] = datetime.now().isoformat()
+                    
+                    # Add location information to the device (based on monitoring station)
+                    if monitoring_station_location:
+                        # Pre-calculate offsets for efficiency
+                        is_simulated = monitoring_station_location.get('simulated', True)
+                        offset_factor = 0.005 if is_simulated else 0.002
+                        rnd_offset = random.random() - 0.5
                         
-                        # Update devices database with currently detected devices
-                        for device in current_devices:
-                            update_device_db(device)
-                        
-                        # Get all devices from the database (includes current and previously seen devices)
-                        all_devices = list(devices_db.values())
-                        
-                        # Prepare data to broadcast
-                        data = {
-                            "devices": all_devices,
-                            "spectrum": spectrum_data.get('spectrum', []) if spectrum_data else [],
-                            "monitoring_station": monitoring_station_location
+                        device['location'] = {
+                            "latitude": monitoring_station_location["latitude"] + (rnd_offset * offset_factor),
+                            "longitude": monitoring_station_location["longitude"] + (rnd_offset * offset_factor),
+                            "using_gps": not is_simulated
                         }
-                        
-                        # Broadcast to all connected clients
-                        for connection in connections:
-                            try:
-                                await connection.send_text(json.dumps(data, cls=CustomJSONEncoder))
-                            except Exception as e:
-                                logger.error(f"Error sending data to WebSocket client: {e}")
-                                # Remove failed connection
-                                if connection in connections:
-                                    connections.remove(connection)
-            except Exception as e:
-                logger.error(f"Error in broadcast_data: {e}")
+                    else:
+                        device['location'] = DEFAULT_MONITORING_LOCATION
+                    
+                    # Add to current devices list
+                    current_devices.append(device)
+                
+                # Update devices database - but batch updates
+                if current_devices:
+                    # Only update a subset of devices in DB to reduce load
+                    for device in current_devices[:min(10, len(current_devices))]:
+                        update_device_db(device)
+            
+            # Prepare data to broadcast - only include necessary data
+            # Limit the number of devices sent to improve performance
+            max_devices_to_send = 30  # Limit number of devices sent to client
+            
+            # Sort devices by last_seen timestamp to send most recent ones
+            all_devices = sorted(
+                list(devices_db.values()),
+                key=lambda d: d.get('last_seen', ''),
+                reverse=True
+            )[:max_devices_to_send]
+            
+            # Only send spectrum data if it was updated
+            spectrum_data = []
+            if update_spectrum and _last_spectrum_data:
+                spectrum_data = _last_spectrum_data.get('spectrum', [])
+                # Downsample spectrum data to reduce payload size
+                if len(spectrum_data) > 1000:  # If we have a lot of spectrum points
+                    step = len(spectrum_data) // 500  # Keep around 500 points
+                    spectrum_data = spectrum_data[::step]
+            
+            data = {
+                "devices": all_devices,
+                "spectrum": spectrum_data,
+                "monitoring_station": monitoring_station_location
+            }
+            
+            # Broadcast to all connected clients
+            if connections:
+                # Serialize JSON data once instead of for each connection
+                json_data = json.dumps(data, cls=CustomJSONEncoder)
+                
+                # Broadcast to all connected clients
+                for connection in connections.copy():  # Use a copy to avoid modification during iteration
+                    try:
+                        await connection.send_text(json_data)
+                    except Exception as e:
+                        # Remove failed connection
+                        logger.error(f"Error sending data to WebSocket client: {e}")
+                        if connection in connections:
+                            connections.remove(connection)
+                            
+        except Exception as e:
+            logger.error(f"Error in broadcast_data: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
-        # Wait before next update
-        await asyncio.sleep(1)
+        # Adaptive sleep - use shorter intervals when there are active connections
+        sleep_time = 0.2 if len(connections) > 0 else 0.5
+        await asyncio.sleep(sleep_time)
 
 async def periodic_save():
     """Periodically save whitelist and devices database to ensure data persistence"""

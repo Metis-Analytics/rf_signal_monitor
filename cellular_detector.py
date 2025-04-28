@@ -276,7 +276,7 @@ class CellularDetector:
         else:
             # For phones, use standard IMEI generation
             try:
-                simulated_id = self.generate_imei(manufacturer, tech_type)
+                simulated_id = self.generate_imei(manufacturer, tech_type, device_id)
             except Exception as e:
                 print(f"Error in IMEI generation process: {e}")
                 # Ultimate fallback with hardcoded valid IMEI
@@ -371,8 +371,12 @@ class CellularDetector:
         """Main method to analyze signal for cellular characteristics"""
         return self.analyze_signal_characteristics(samples, center_freq, sample_rate)
 
-    def generate_imei(self, manufacturer, tech_type):
+    def generate_imei(self, manufacturer, tech_type, device_id=None):
         try:
+            # Make sure manufacturer is defined with a default value if None
+            if manufacturer is None:
+                manufacturer = 'Unknown'
+                
             # TAC prefixes by manufacturer (first 6 digits)
             # These are approximations based on common TAC ranges
             tac_prefixes = {
@@ -393,7 +397,11 @@ class CellularDetector:
             
             # Generate 6-digit serial number
             # Use device_id as seed to ensure consistent generation for the same device
-            random.seed(device_id)
+            # If device_id is not provided, use a random seed
+            if device_id:
+                random.seed(str(device_id))
+            else:
+                random.seed(str(time.time()))
             serial = ''.join([str(random.randint(0, 9)) for _ in range(6)])
             
             # Combine TAC and Serial
