@@ -39,7 +39,7 @@ rf_monitor = RFMonitor()
 
 # Initialize GPS module - update the port to match your GPS device
 # Common ports: 'COM3' on Windows, '/dev/ttyUSB0' or '/dev/ttyACM0' on Linux
-GPS_PORT = os.environ.get('GPS_PORT', 'COM3')  # Default to COM5, override with environment variable
+GPS_PORT = os.environ.get('GPS_PORT', 'COM8')  # Default to COM5, override with environment variable
 
 # Default monitoring location (used when GPS is not available)
 DEFAULT_MONITORING_LOCATION = {
